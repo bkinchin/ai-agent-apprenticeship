@@ -87,8 +87,8 @@ An uncalibrated judge is not evidence.
 
 ## 6. Determinism and repeats
 
-- Temperature: 0
-- Model version: pinned
+- Model: pinned (never a floating alias)
+- Reasoning effort: fixed
 - Fixtures: seeded, reset per case
 - Clock: frozen
 - Runs per case: 3

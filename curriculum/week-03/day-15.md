@@ -85,7 +85,8 @@ You have built by hand: a tool loop, state management, structured output, policy
 | Framework | Gives you | Costs you |
 |---|---|---|
 | **LangGraph** | Graph execution, checkpointing, streaming, human-in-loop primitives | Abstraction over your control flow; debugging through their layer |
-| **OpenAI Agents SDK** | Tool loop, handoffs, guardrails, tracing | Provider coupling |
+| **Anthropic Tool Runner** | The tool loop, with per-turn hooks for approval and interception | Beta surface; you stop owning the loop |
+| **Claude Agent SDK** | A full coding/filesystem agent harness with built-in tools | A large opinionated harness; you host it |
 | **MCP** | Standard tool protocol, reusable servers, ecosystem | A protocol layer; an operational surface |
 | **Vector DBs** | Semantic retrieval at scale | Infra, embedding cost, chunking complexity |
 
@@ -142,7 +143,7 @@ The bottom line is the important one. **The shared substrate is the platform.** 
 
 **5. Write up the multi-agent comparison honestly.** In most cases the single agent wins. If yours doesn't, that is more interesting and you should say why.
 
-**6. Framework evaluation.** Pick **one** of LangGraph, the OpenAI Agents SDK, or MCP. Rebuild one narrow slice of an existing agent with it — not the whole thing. Then write `docs/architecture/framework-evaluation.md` answering the five questions above, with a recommendation.
+**6. Framework evaluation.** Pick **one** of LangGraph, the Anthropic Tool Runner, or MCP. Rebuild one narrow slice of an existing agent with it — not the whole thing. Then write `docs/architecture/framework-evaluation.md` answering the five questions above, with a recommendation.
 
 **7. Draw the pattern decision tree** in `docs/diagrams/`, annotated with your own experience.
 

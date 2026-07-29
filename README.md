@@ -90,7 +90,7 @@ Each project builds on the last. Project 4 is only possible because 1–3 forced
 
 Deliberately small at the start.
 
-**Stack:** Node.js · TypeScript · OpenAI API · Zod · SQLite
+**Stack:** Node.js · TypeScript · Claude API (Anthropic SDK) · Zod · SQLite
 
 **Deliberately excluded until you understand why you need them:** Docker, Kubernetes, LangGraph, vector databases, agent frameworks.
 
@@ -102,11 +102,11 @@ See [docs/architecture/technology-choices.md](docs/architecture/technology-choic
 
 ## Setup
 
-Prerequisites: Node.js 20+ and an OpenAI API key.
+Prerequisites: Node.js 20+ and an Anthropic API key.
 
 ```bash
 npm install
-cp .env.example .env   # then add your OPENAI_API_KEY
+cp .env.example .env.local   # then add your ANTHROPIC_API_KEY
 ```
 
 Project dependencies are installed per project, on the day you need them — not up front.

@@ -35,7 +35,7 @@ By the end you should be able to state exactly what the model receives on any gi
   │  state + window    │─────▶│                  │
   └─────────┬──────────┘      └──────────────────┘
             ▼
-      [ messages ] ──▶ OpenAI API ──▶ response
+   { system, messages } ──▶ Claude API ──▶ response.content[]
 ```
 
 The `ContextAssembler` is the only place the messages array is built. That constraint is deliberate — it is the seam that everything from day 9 onwards plugs into.
@@ -59,19 +59,19 @@ The `ContextAssembler` is the only place the messages array is built. That const
 ## Setup
 
 ```bash
-npm init -y && npm i openai zod dotenv && npm i -D typescript tsx @types/node
+npm init -y && npm i @anthropic-ai/sdk zod && npm i -D typescript tsx @types/node
 ```
 
-`OPENAI_API_KEY` goes in the repo-root `.env`.
+`ANTHROPIC_API_KEY` goes in the repo-root `.env.local`. No `dotenv` — Node reads it natively via `--env-file`.
 
 ## Usage
 
 ```bash
-npx tsx src/index.ts                       # new session
-npx tsx src/index.ts --session s_8f2a      # resume
-npx tsx src/index.ts --verbose             # print the full messages array each turn
-npx tsx src/index.ts --forget              # send only the latest message
-npx tsx src/index.ts --window 6            # sliding window of 6 turns
+npx tsx --env-file=../../.env.local src/index.ts                       # new session
+npx tsx --env-file=../../.env.local src/index.ts --session s_8f2a      # resume
+npx tsx --env-file=../../.env.local src/index.ts --verbose             # print the full messages array each turn
+npx tsx --env-file=../../.env.local src/index.ts --forget              # send only the latest message
+npx tsx --env-file=../../.env.local src/index.ts --window 6            # sliding window of 6 turns
 ```
 
 ## Deliberately not here

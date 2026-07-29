@@ -17,7 +17,7 @@ The definition matters more than the code. Most enterprise "agent" projects fail
 A large language model is a pure function:
 
 ```
-f(messages) -> message
+f(system, messages) -> message
 ```
 
 No memory. No side effects. No ability to act. Every call is the first call. Everything that feels like intelligence, continuity, or agency is **scaffolding you build around this function**.
@@ -124,20 +124,24 @@ Work in `projects/01-hello-agent/`.
 **1. Set up.**
 
 ```bash
-cd projects/01-hello-agent
-npm init -y && npm i openai zod dotenv && npm i -D typescript tsx @types/node
-npx tsc --init
+cd projects/01-hello-agent && npm init -y && npm i @anthropic-ai/sdk zod && npm i -D typescript tsx @types/node
 ```
 
-Put `OPENAI_API_KEY` in the repo-root `.env`.
+Put `ANTHROPIC_API_KEY` in the repo-root `.env.local`. No `dotenv` needed — Node 20.6+ reads it with `node --env-file=.env.local`, and `tsx` passes the flag through.
 
-**2. Build a single-turn call.** One file, `src/index.ts`. Send a message, print the response. Print the token usage from the API response too — you should see cost from minute one.
+**2. Build a single-turn call.** One file, `src/index.ts`. Send a message, print the response. Print `response.usage` too — `input_tokens` and `output_tokens` — you should see cost from minute one.
+
+Three things about this API that will shape everything after it:
+
+- **`system` is a top-level parameter, not a message.** Instructions and conversation are structurally separate. Hold onto that; it is the seam day 2 is built on.
+- **`max_tokens` is required**, and it caps *thinking plus response text together*. Set it generously (4096) or you will truncate mid-sentence and blame the model.
+- **`response.content` is an array of typed blocks**, not a string. Narrow on `block.type === "text"` before reading `block.text`. The model returns a *structure*, and pretending otherwise is the first thing that breaks on day 3.
 
 **3. Make it multi-turn.** A REPL loop reading from stdin. Maintain a `messages` array. Send the whole array every time.
 
 **4. Prove the model is stateless.** Add a `--forget` flag that sends only the latest message. Ask a two-turn question ("My name is Billy" / "What's my name?") with and without it. Watch it fail. This is the single most important thing you will observe this week.
 
-**5. Log what you send.** Add a `--verbose` flag that prints the full `messages` array before each call. Look at it. That array *is* the agent's entire world.
+**5. Log what you send.** Add a `--verbose` flag that prints the full `system` string and `messages` array before each call. Look at it. Those two things *are* the agent's entire world.
 
 **6. Classify five systems.** In `journal/day-01.md`, place these on the ladder (0–4) and justify each in one sentence: a customer-service FAQ bot; GitHub Copilot autocomplete; a CI pipeline that retries failed jobs; ChatGPT with browsing; a script that reads your inbox and drafts replies for approval.
 

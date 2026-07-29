@@ -132,7 +132,7 @@ Run each case N times (3 is a reasonable default) and report:
 - **Flakiness** — a case passing sometimes is itself a finding, usually about an under-specified prompt
 - **Worst-case result** for critical cases — never average a safety check
 
-Determinism aids: temperature 0, pinned model version, seeded fixtures, frozen clock. You will still see variance. Report it rather than hiding it.
+Determinism aids: pinned model, fixed reasoning effort, seeded fixtures, frozen clock. There is no temperature knob (day 7). You will still see variance. Report it rather than hiding it.
 
 ### Cost and speed of the engine itself
 

@@ -152,7 +152,7 @@ You will tune the prompt until the golden set passes, and production quality wil
           ▼
    ┌─────────────┐
    │   Runner    │ ── seeded fixtures, stubbed clock,
-   │             │    fixed model + temperature 0
+   │             │    pinned model + fixed effort
    └──────┬──────┘
           ▼
      [ full trace per case ]
@@ -169,7 +169,11 @@ You will tune the prompt until the golden set passes, and production quality wil
    └─────────────┘
 ```
 
-**Determinism where you can get it:** temperature 0, pinned model version, seeded database reset per case, frozen clock. You still get run-to-run variance — so run important cases 3× and report the *worst* result. Averaging hides the failure mode you care about.
+**Determinism where you can get it:** pinned model, fixed reasoning effort, seeded database reset per case, frozen clock.
+
+Note the absence of a temperature knob. Current Claude models reject `temperature`, `top_p`, and `top_k` outright — a request carrying one returns a 400. This is worth sitting with rather than working around: **the industry's habitual "set temperature 0 for reproducibility" was always a comfort blanket.** It never guaranteed identical outputs, and believing it did let teams skip building real evaluation. You do not get a determinism dial. You get measurement.
+
+So: run important cases 3× and report the **worst** result, never the average. Averaging hides the failure mode you care about, and a case that passes 2 out of 3 times is a finding, not a pass.
 
 ---
 

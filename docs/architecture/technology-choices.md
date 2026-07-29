@@ -10,7 +10,7 @@ The stack for this apprenticeship, and — more importantly — what is delibera
 |---|---|
 | **TypeScript** | Strong enterprise adoption, excellent AI ecosystem, types as documentation. Strict mode, always. |
 | **Node.js 20+** | Built-in test runner and SQLite. Fewer dependencies to explain. |
-| **OpenAI API** | Direct API access, no abstraction layer hiding the request. You need to see the actual messages array. |
+| **Claude API** (`@anthropic-ai/sdk`) | Direct API access, no abstraction layer hiding the request. You need to see the actual messages array. Its request shape also separates `system` from `messages` structurally, which makes the context-assembly seam (day 2) clearer than a provider that folds instructions into the message list. |
 | **Zod** | One definition → TypeScript type, JSON Schema, and runtime validation. The seam between the probabilistic and deterministic halves of the system. |
 | **SQLite** | A file. Zero operational cost. Fast enough to teach the shape of every storage problem in this programme. |
 
