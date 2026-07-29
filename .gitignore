@@ -1,0 +1,34 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# build
+dist/
+build/
+*.tsbuildinfo
+
+# data — regenerate from seeds, never commit
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+
+# traces and evaluation output — may contain PII
+traces/
+eval-results/
+!eval-results/.gitkeep
+
+# generated agents — commit examples only
+projects/04-agent-factory/generated/*
+!projects/04-agent-factory/generated/.gitkeep
+!projects/04-agent-factory/generated/examples/
+
+# os / editor
+.DS_Store
+.idea/
+*.swp

@@ -1,0 +1,19 @@
+{
+  "name": "ai-agent-apprenticeship",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A 21-day intensive apprenticeship in enterprise AI agent engineering",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "day": "echo 'Open curriculum/week-0X/day-XX.md'",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test",
+    "eval": "echo 'Built on day 7 — see shared/evaluation/'"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
