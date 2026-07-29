@@ -1,69 +1,69 @@
+// Hello Agent — day 1.
+// A chat loop. ~50 lines. Read it top to bottom; nothing here is clever.
+
 import readline from "node:readline/promises";
-import type Anthropic from "@anthropic-ai/sdk";
-import { callModel, MODEL } from "./llm.js";
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic(); // reads ANTHROPIC_API_KEY from the environment
+const MODEL = "claude-opus-5";
 
 const FORGET = process.argv.includes("--forget");
 const VERBOSE = process.argv.includes("--verbose");
 
 const SYSTEM = "You are a helpful assistant. Keep your replies to two sentences.";
 
-/** Everything the model has said and been told, this session. */
+// THE IMPORTANT VARIABLE. Every message, both sides, this session.
+// The model has no memory of its own — this array is the memory.
 const history: Anthropic.MessageParam[] = [];
 
 let totalCost = 0;
-let turn = 0;
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+rl.on("close", () => process.exit(0)); // ctrl-D / end of input
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
-
-console.log(`model=${MODEL}  forget=${FORGET}  verbose=${VERBOSE}`);
+console.log(`${MODEL}${FORGET ? "  [--forget]" : ""}${VERBOSE ? "  [--verbose]" : ""}`);
 console.log("type /exit to quit\n");
 
 while (true) {
   const input = (await rl.question("you › ")).trim();
   if (!input) continue;
   if (input === "/exit") break;
-  turn++;
 
-  // ─────────────────────────────────────────────────────────────────────
-  // TODO 1 — Build the request.
-  //
-  // What does the model actually receive this turn?
-  //   • Normally:      everything in `history`, then this turn's user message.
-  //   • With --forget: ONLY this turn's user message.
-  //
-  // A user message looks like: { role: "user", content: input }
-  // ─────────────────────────────────────────────────────────────────────
-  const messages: Anthropic.MessageParam[] = [];
+  history.push({ role: "user", content: input });
 
-  // ─────────────────────────────────────────────────────────────────────
-  // TODO 2 — If VERBOSE, print SYSTEM and `messages` before the call.
-  //
-  // Use console.dir(messages, { depth: null }) so nothing is elided.
-  // Look at the output properly. That object is the agent's entire world.
-  // ─────────────────────────────────────────────────────────────────────
+  // What we send. Normally the whole conversation; with --forget, only the
+  // latest message — which is what the model would see if we kept no history.
+  const messages = FORGET ? history.slice(-1) : history;
 
-  const reply = await callModel(SYSTEM, messages);
+  if (VERBOSE) {
+    console.log("\n┌─ sending ────────────────────");
+    console.log("system:", SYSTEM);
+    console.dir(messages, { depth: null });
+    console.log("└──────────────────────────────\n");
+  }
 
-  // ─────────────────────────────────────────────────────────────────────
-  // TODO 3 — Record this turn in `history`.
-  //
-  // Append BOTH sides: the user message AND the assistant's reply
-  //   { role: "assistant", content: reply.text }
-  //
-  // Ask yourself why both. What breaks next turn if you only keep one?
-  // ─────────────────────────────────────────────────────────────────────
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 1024,
+    thinking: { type: "disabled" }, // on by default; not needed today
+    system: SYSTEM, // note: a separate field, NOT a message
+    messages,
+  });
 
-  totalCost += reply.costUsd;
+  // response.content is an array of typed blocks, not a string.
+  // Today it holds only text. On day 3 it will also hold tool calls.
+  const text = response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("");
 
-  console.log(`\nclaude › ${reply.text}\n`);
-  console.log(
-    `         [turn ${turn} · in ${reply.inputTokens} out ${reply.outputTokens}` +
-      ` · $${reply.costUsd.toFixed(5)} · session $${totalCost.toFixed(5)}]\n`,
-  );
+  history.push({ role: "assistant", content: text });
+
+  const { input_tokens, output_tokens } = response.usage;
+  const cost = (input_tokens / 1e6) * 5 + (output_tokens / 1e6) * 25;
+  totalCost += cost;
+
+  console.log(`\nclaude › ${text}`);
+  console.log(`          in ${input_tokens} · out ${output_tokens} · $${totalCost.toFixed(5)} so far\n`);
 }
 
 rl.close();
-console.log(`\n${turn} turns · $${totalCost.toFixed(5)} total`);
