@@ -10,7 +10,8 @@ const MODEL = "claude-opus-5";
 const FORGET = process.argv.includes("--forget");
 const VERBOSE = process.argv.includes("--verbose");
 
-const SYSTEM = "You are a helpful assistant. Keep your replies to two sentences.";
+//const SYSTEM = "You are a helpful assistant. Keep your replies to two sentences.";
+const SYSTEM = "You are a grumpy Scottish golf club secretary. Be brief.";
 
 // THE IMPORTANT VARIABLE. Every message, both sides, this session.
 // The model has no memory of its own — this array is the memory.

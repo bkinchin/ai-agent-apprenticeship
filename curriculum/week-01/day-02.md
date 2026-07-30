@@ -119,7 +119,19 @@ Why SQLite and not Redis or Postgres? Because it is a file, it has zero operatio
 
 Continue in `projects/01-hello-agent/`.
 
-**1. Define the session interface first, before any storage code.**
+> **Order matters here.** Feel the problem, try the naive fix, watch it break, then build the real one. Storage comes last — it is plumbing, and plumbing built before you know the shape of the problem is plumbing you rip out.
+
+**1. Measure the problem.** Run `src/cost-curve.ts`. Record the 30-turn numbers and the ratio in your journal. Note where cumulative cost stops being linear.
+
+**2. Add a sliding window** to `src/index.ts` — `history.slice(-WINDOW)`, N configurable. Confirm the per-turn `in` count goes flat.
+
+**3. Break it deliberately.** State a fact on turn 1, fill the window with chatter, then ask about the fact. Watch it fail. **This failure is the point of the day** — you traded cost for correctness.
+
+**4. Add task state.** Extract one fact (the user's name will do) into a small object, and inject it into the `system` string. Now run with `WINDOW=2` and confirm it still knows the name from turn 1. Same cost, correct answer.
+
+**5. Build a `ContextAssembler`** — a function `assemble(state, history, input) -> { system, messages }`. Move steps 2 and 4 inside it. It becomes the single place the request is constructed, and everything from day 9 onwards plugs into it.
+
+**6. Define the session interface**, now that you know what it has to hold.
 
 ```ts
 interface SessionStore {
@@ -130,19 +142,11 @@ interface SessionStore {
 }
 ```
 
-Interface first is deliberate: you will swap the implementation twice in this programme.
+Interface first is deliberate — but only *now*, once steps 1–5 have shown you what it must hold. You will swap the implementation twice in this programme.
 
-**2. Implement it twice.** `InMemorySessionStore` and `SqliteSessionStore` (use `node:sqlite`, built into Node 22+, or `better-sqlite3`). Same interface. Prove your agent code doesn't change when you swap them.
+**7. Implement it twice.** `InMemorySessionStore` and `SqliteSessionStore` (use `node:sqlite`, built into Node 22+). Same interface. Prove your agent code doesn't change when you swap them.
 
-**3. Add `--session <id>` to the REPL.** Restart the process, resume the conversation, confirm it remembers. This is the moment state becomes real.
-
-**4. Build a `ContextAssembler`.** A function `assemble(session, userInput) -> Message[]`. Start with full history. Make it the *only* place the messages array is constructed.
-
-**5. Add a sliding window.** Keep the system prompt plus the last N turns, N configurable. Have a 30-turn conversation and compare token usage with and without.
-
-**6. Add task state.** Extract one fact from the conversation (the user's name will do) into `task_state`, and inject it into the system prompt. Now run with a window of 2 and confirm it still knows the name from turn 1. **This is the exercise's real payoff — make sure you see it work.**
-
-**7. Measure.** Log cumulative tokens per session. Plot or tabulate full-history vs. windowed over 30 turns. Put the numbers in your journal.
+**8. Add `--session <id>` to the REPL.** Restart the process, resume the conversation, confirm it remembers. This is the moment state becomes real.
 
 ---
 
