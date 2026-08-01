@@ -68,7 +68,8 @@ function execute(name: string, input: unknown): string {
 
 // ── The loop ─────────────────────────────────────────────────────
 const messages: Anthropic.MessageParam[] = [
-  { role: "user", content: "I'm billy@example.com — what am I paying each month?" },
+  //{ role: "user", content: "I'm billy@example.com — what am I paying each month?" },
+  { role: "user", content: "I'm nobody@example.com — what am I paying each month?" },
 ];
 
 let steps = 0;
