@@ -14,7 +14,9 @@ const CUSTOMERS = [
   { id: "CUST-2044", email: "sam@example.com", name: "Sam Okafor" },
 ];
 
-// `let` — this one gets mutated. That's the whole difference.
+// This one gets mutated by cancel_subscription. Note `const` does NOT
+// prevent that — it only stops the variable being pointed at a different
+// array. The objects inside are freely writable.
 const SUBSCRIPTIONS = [
   { customerId: "CUST-1029", plan: "PRO", priceGbp: 49, renewsOn: "2026-08-14", status: "active" },
   { customerId: "CUST-2044", plan: "BASIC", priceGbp: 12, renewsOn: "2026-09-01", status: "active" },

@@ -2,6 +2,7 @@
 // Run: npx tsx --env-file=../../.env.local src/loop-demo.ts
 
 import Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 
 const client = new Anthropic();
 const MODEL = "claude-opus-5";
@@ -18,44 +19,67 @@ const SUBSCRIPTIONS = [
   { customerId: "CUST-2044", plan: "BASIC", priceGbp: 12, renewsOn: "2026-09-01", status: "active" },
 ];
 
-// ── What the model is told exists ────────────────────────────────
-const tools: Anthropic.Tool[] = [
+// ── ONE definition per tool ──────────────────────────────────────
+// The Zod schema is the single source of truth. Everything else is
+// derived from it, so the two can never drift apart.
+const TOOL_SPECS = [
   {
     name: "find_customer",
     description:
       "Look up a customer by their email address. Returns their customer ID " +
       "and name. Use this first — other tools need the customer ID.",
-    input_schema: {
-      type: "object",
-      properties: { email: { type: "string", description: "The customer's email address" } },
-      required: ["email"],
-    },
+    schema: z.object({
+      email: z.email().describe("The customer's email address"),
+    }),
   },
   {
     name: "get_subscription",
     description:
       "Retrieve a customer's current subscription: plan, price, renewal date " +
       "and status. Requires a customer ID from find_customer.",
-    input_schema: {
-      type: "object",
-      properties: { customerId: { type: "string", description: "e.g. CUST-1029" } },
-      required: ["customerId"],
-    },
+    schema: z.object({
+      customerId: z.string().regex(/^CUST-\d{4}$/).describe("e.g. CUST-1029"),
+    }),
   },
-];
+] as const;
+
+// Derived #1 — what gets SENT TO THE MODEL.
+const tools: Anthropic.Tool[] = TOOL_SPECS.map((t) => ({
+  name: t.name,
+  description: t.description,
+  input_schema: z.toJSONSchema(t.schema) as Anthropic.Tool["input_schema"],
+}));
+
+// Derived #2 — what YOUR CODE checks against.
+const SCHEMAS: Record<string, z.ZodType> = Object.fromEntries(
+  TOOL_SPECS.map((t) => [t.name, t.schema]),
+);
 
 // ── What actually runs. Ours, always. ────────────────────────────
 function execute(name: string, input: unknown): string {
+  const schema = SCHEMAS[name];
+  if (!schema) return `Unknown tool: ${name}`;
+
+  // THE GATE. Nothing below this line runs on unchecked data.
+  const parsed = schema.safeParse(input);
+  if (!parsed.success) {
+    const problems = parsed.error.issues
+      .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+      .join("; ");
+    return `Invalid arguments for ${name}: ${problems}`;
+  }
+
   switch (name) {
     case "find_customer": {
-      const { email } = input as { email: string };
+      // Still a cast — but now it's backed by a check that just passed.
+      const { email } = parsed.data as { email: string };
       const found = CUSTOMERS.find((c) => c.email === email);
       return found
         ? JSON.stringify(found)
         : `No customer found with email ${email}. Ask them to confirm the address.`;
     }
     case "get_subscription": {
-      const { customerId } = input as { customerId: string };
+      const { customerId } = parsed.data as { customerId: string };
       const found = SUBSCRIPTIONS.find((s) => s.customerId === customerId);
       return found
         ? JSON.stringify(found)
@@ -68,8 +92,8 @@ function execute(name: string, input: unknown): string {
 
 // ── The loop ─────────────────────────────────────────────────────
 const messages: Anthropic.MessageParam[] = [
-  //{ role: "user", content: "I'm billy@example.com — what am I paying each month?" },
-  { role: "user", content: "I'm nobody@example.com — what am I paying each month?" },
+  // Note: "billy" is not an email address. Watch what the schema does.
+  { role: "user", content: "hi, my email is billy@example — what am I paying each month?" },
 ];
 
 let steps = 0;
