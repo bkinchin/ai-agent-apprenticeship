@@ -1,0 +1,26 @@
+# COMMERCIAL POLICY — cancellation agent
+#
+# Business rules. Reviewed quarterly. Changes need approval from the
+# owner below, but not a security review.
+#
+# These rules can only ADD constraints. They are evaluated after the
+# safety baseline and cannot permit anything it denies.
+
+version: 1
+updated: 2026-08-01
+owner: Head of Customer Operations
+editable_by: [customer-ops, marketing]
+
+rules:
+  - id: retention-before-cancel
+    type: require_flag
+    flag: retentionOffered
+    tools: [cancel_subscription]
+    rationale: >
+      Every cancelling customer must be offered a retention deal first.
+      Commercial requirement, reviewed quarterly.
+    message: >
+      Before we cancel, let me check what offers are available to you.
+
+# ── changelog ────────────────────────────────────────────────────
+# v1  2026-08-01  Initial: retention before cancellation (Head of Cust Ops)

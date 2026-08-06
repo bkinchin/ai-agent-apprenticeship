@@ -1,0 +1,28 @@
+# SAFETY BASELINE — cancellation agent
+#
+# ⚠️  This file is NOT editable by automation, by generated agents, or by
+#     any self-service tooling. Changes require a named human approver
+#     and a security review.
+#
+# These rules exist to prevent harm. They are always evaluated FIRST, so
+# no rule in any other file can permit what these deny.
+
+version: 2
+updated: 2026-08-01
+owner: Head of Security
+editable_by: [security-team]
+
+rules:
+  - id: verify-before-disclosure
+    type: require_verified
+    tools: [get_subscription, cancel_subscription]
+    rationale: >
+      Account details may only be disclosed to a verified customer.
+      Without this, anyone who knows an email address can read or change
+      someone else's subscription.
+    message: >
+      I need to confirm your identity before I can look at account details.
+
+# ── changelog ────────────────────────────────────────────────────
+# v2  2026-07-14  Extended to cancel_subscription (Head of Security)
+# v1  2026-07-02  Initial: verify before disclosure
