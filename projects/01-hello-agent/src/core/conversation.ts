@@ -3,6 +3,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import { checkConfirmation } from "./confirmation.js";
 import { runTool, TOOL_SPECS, type ToolContext, type World } from "./executor.js";
 import type { Policy } from "./policy.js";
 import { canTransition, restart, STAGE_TOOLS, type Stage, type TaskState } from "./workflow.js";
@@ -83,14 +84,35 @@ export class Conversation {
       events.push("[code] state cleared → GREETING (verification discarded)");
     }
 
-    // Confirmation is recorded by code, bound to the action on the table.
-    if (
-      this.stage === "CONFIRMATION" &&
-      this.pending &&
-      /^(yes|yeah|yep|confirm|do it|go ahead)/i.test(turn)
-    ) {
-      this.ctx.state.confirmedAction = this.pending;
-      events.push(`[code] confirmation recorded for ${this.pending.customerId}`);
+    // Confirmation. The model answers one narrow question in isolation;
+    // YOUR CODE decides what to do with the answer and records it.
+    if (this.stage === "CONFIRMATION" && this.pending) {
+      const action = `Cancel the subscription for customer ${this.pending.customerId}. This is irreversible.`;
+      const check = await checkConfirmation(action, turn);
+      if (check.affirms) {
+        this.ctx.state.confirmedAction = this.pending;
+        events.push(`[code] confirmation recorded for ${this.pending.customerId} — "${check.quote}"`);
+      } else {
+        events.push(`[code] not treated as confirmation`);
+      }
+    }
+
+    // ★ Advance BEFORE calling the model. The confirmation we just recorded
+    //   may have unlocked the next stage, and the model must be given that
+    //   stage's tools on THIS turn — not the next one. Otherwise it decides
+    //   with a stale tool set and reasonably concludes it cannot help.
+    {
+      const before = this.stage;
+      this.stage = advance(this.stage, this.ctx.state);
+      if (this.stage !== before) {
+        events.push(`[code] ${before} → ${this.stage}`);
+        if (this.stage === "CONFIRMATION" && this.ctx.state.verifiedCustomerId) {
+          this.pending = {
+            tool: "cancel_subscription",
+            customerId: this.ctx.state.verifiedCustomerId,
+          };
+        }
+      }
     }
 
     this.messages.push({ role: "user", content: turn });
@@ -130,6 +152,12 @@ export class Conversation {
         results.push({ type: "tool_result", tool_use_id: u.id, content: out });
       }
       this.messages.push({ role: "user", content: results });
+
+      if (this.ctx.state.escalated && this.stage !== "ESCALATED") {
+        this.stage = "ESCALATED";
+        events.push(`[code] → ESCALATED (${this.ctx.state.escalated.reason})`);
+        break;
+      }
 
       const before = this.stage;
       this.stage = advance(this.stage, this.ctx.state);

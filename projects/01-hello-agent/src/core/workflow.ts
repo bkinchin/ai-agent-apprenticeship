@@ -30,15 +30,19 @@ export interface TaskState {
    * success that the world doesn't reflect.
    */
   executedAction?: { tool: string; customerId: string };
+  /** Set by escalate_to_human. The agent's own way out. */
+  escalated?: { reason: string; summary: string };
 }
 
 /** Which tools exist in each stage. Anything not listed cannot be called. */
+const ALWAYS = ["escalate_to_human"]; // the agent's exit, from anywhere
+
 export const STAGE_TOOLS: Record<Stage, string[]> = {
-  GREETING: ["verify_identity"],
-  VERIFICATION: ["verify_identity"],
-  INSPECTION: ["get_subscription", "offer_retention"],
-  CONFIRMATION: [], // conversation only — nothing to call here
-  EXECUTION: ["cancel_subscription"],
+  GREETING: ["verify_identity", ...ALWAYS],
+  VERIFICATION: ["verify_identity", ...ALWAYS],
+  INSPECTION: ["get_subscription", "offer_retention", ...ALWAYS],
+  CONFIRMATION: [...ALWAYS], // otherwise a stuck customer has no way out
+  EXECUTION: ["cancel_subscription", ...ALWAYS],
   COMPLETE: [],
   ESCALATED: [], // a human has it now
 };

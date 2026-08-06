@@ -58,6 +58,20 @@ export const TOOL_SPECS = [
     schema: z.object({ customerId: z.string().regex(/^CUST-\d{4}$/) }),
   },
   {
+    // Available in EVERY stage. The agent must always be able to get a
+    // customer out — day 5 gave the customer an escape hatch and gave the
+    // agent none, which is how you build a trap.
+    name: "escalate_to_human",
+    description:
+      "Hand this conversation to a human colleague. Use whenever you cannot " +
+      "complete what the customer needs, or they seem stuck or frustrated. " +
+      "Always available. Never apologise for using it.",
+    schema: z.object({
+      reason: z.enum(["cannot_complete", "customer_frustrated", "out_of_scope", "policy_block"]),
+      summary: z.string().max(600).describe("What the colleague needs to know to pick this up"),
+    }),
+  },
+  {
     name: "cancel_subscription",
     description: "Cancel the subscription. Irreversible.",
     schema: z.object({ customerId: z.string().regex(/^CUST-\d{4}$/) }),
@@ -100,6 +114,11 @@ const IMPLEMENTATIONS: Record<string, (args: any, ctx: ToolContext) => string> =
     if (!s) return `No subscription for ${customerId}.`;
     state.retentionOffered = true; // evidence the commercial rule needs
     return JSON.stringify({ offer: "50% off for 3 months", newPriceGbp: s.priceGbp / 2 });
+  },
+
+  escalate_to_human: ({ reason, summary }, { state }) => {
+    state.escalated = { reason, summary };
+    return JSON.stringify({ escalated: true, reference: `ESC-${Date.now().toString(36).toUpperCase()}` });
   },
 
   cancel_subscription: ({ customerId }, { world, state }) => {
