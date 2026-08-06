@@ -105,6 +105,7 @@ function executeTool(name: string, input: unknown, state: TaskState): string {
       const s = SUBSCRIPTIONS.find((x) => x.customerId === customerId);
       if (!s) return `No subscription for ${customerId}.`;
       s.status = "cancelled";
+      state.executedAction = { tool: "cancel_subscription", customerId }; // ★ evidence
       return JSON.stringify({ customerId, status: "cancelled" });
     }
     default:

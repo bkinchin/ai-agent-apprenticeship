@@ -22,6 +22,12 @@ export interface TaskState {
    * something was.
    */
   confirmedAction?: { tool: string; customerId: string };
+  /**
+   * Set only when the write tool actually ran and returned. Without this,
+   * COMPLETE can be reached having done nothing — the stage would report
+   * success that the world doesn't reflect.
+   */
+  executedAction?: { tool: string; customerId: string };
 }
 
 /** Which tools exist in each stage. Anything not listed cannot be called. */
@@ -99,6 +105,11 @@ export function canTransition(from: Stage, to: Stage, state: TaskState): Guard {
         reason: "Confirmation is for a different customer than the verified one.",
       };
     }
+  }
+
+  // 3. COMPLETE means the work is DONE, not that we reached the last stage.
+  if (to === "COMPLETE" && !state.executedAction) {
+    return { ok: false, reason: "Nothing was executed — cannot report completion." };
   }
 
   return { ok: true };

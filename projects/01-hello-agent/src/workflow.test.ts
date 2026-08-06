@@ -15,6 +15,11 @@ const readyToCancel: TaskState = {
   confirmedAction: { tool: "cancel_subscription", customerId: "CUST-1029" },
 };
 
+const executed: TaskState = {
+  ...readyToCancel,
+  executedAction: { tool: "cancel_subscription", customerId: "CUST-1029" },
+};
+
 // ── the happy path ───────────────────────────────────────────────
 
 test("the intended route is legal at each step", () => {
@@ -22,7 +27,7 @@ test("the intended route is legal at each step", () => {
   assert.ok(canTransition("VERIFICATION", "INSPECTION", verified).ok);
   assert.ok(canTransition("INSPECTION", "CONFIRMATION", verified).ok);
   assert.ok(canTransition("CONFIRMATION", "EXECUTION", readyToCancel).ok);
-  assert.ok(canTransition("EXECUTION", "COMPLETE", readyToCancel).ok);
+  assert.ok(canTransition("EXECUTION", "COMPLETE", executed).ok);
 });
 
 // ── you cannot skip ahead ────────────────────────────────────────
@@ -77,6 +82,12 @@ test("cannot go backwards", () => {
 
 test("COMPLETE is terminal", () => {
   assert.equal(canTransition("COMPLETE", "EXECUTION", readyToCancel).ok, false);
+});
+
+test("cannot report COMPLETE if nothing was executed", () => {
+  const g = canTransition("EXECUTION", "COMPLETE", readyToCancel);
+  assert.equal(g.ok, false);
+  assert.match((g as { reason: string }).reason, /Nothing was executed/);
 });
 
 // ── escape hatches ───────────────────────────────────────────────
