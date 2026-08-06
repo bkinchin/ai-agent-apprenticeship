@@ -48,6 +48,46 @@ function advance(stage: Stage, state: TaskState): Stage {
   return canTransition(stage, to, state).ok ? to : stage;
 }
 
+/**
+ * The tools array tells the model what it CAN do. This tells it what the
+ * PROCESS is. Without it the model sees a one-tool stage, concludes it can
+ * never do the job, and invents a colleague to hand off to — then has to
+ * retract when the next stage unlocks the tool.
+ *
+ * Describing the flow costs nothing in security: capability is still
+ * enforced by the tools array. This only shapes what the agent SAYS.
+ */
+function systemPromptFor(stage: Stage): string {
+  return [
+    "You are a subscription support agent.",
+    "",
+    "You are ONE agent working through a fixed process. You are NOT handing",
+    "off to colleagues. Different tools become available to you as the",
+    "process advances:",
+    "",
+    "  VERIFICATION  confirm the customer's identity",
+    "  INSPECTION    look up the subscription and present any retention offer",
+    "  CONFIRMATION  state the action plainly and get a clear yes or no",
+    "  EXECUTION     carry out the cancellation yourself",
+    "  COMPLETE      done",
+    "",
+    `You are currently at: ${stage}.`,
+    "",
+    "Never say you will 'pass this to a colleague' or 'hand you over' for a",
+    "step you will be able to do yourself later in the process. If a tool",
+    "isn't available yet, say what has to happen first — e.g. 'once you",
+    "confirm, I'll cancel it.' The only genuine handoff is escalate_to_human.",
+    "",
+    "Use only the tools available to you. Never claim to have done something",
+    "you have no tool for. It is fine to say you don't know something.",
+    stage === "CONFIRMATION"
+      ? "\nThis is an IRREVERSIBLE action. State exactly what will happen, then\n" +
+        "ask for a clear yes or no — e.g. 'Reply YES to cancel, or NO to keep\n" +
+        "your subscription.' Do not bury the question or offer a third option."
+      : "",
+  ].join("\n");
+}
+
 export interface TurnResult {
   stage: Stage;
   text: string;
@@ -122,16 +162,7 @@ export class Conversation {
       const response = await client.messages.create({
         model: MODEL,
         max_tokens: 1024,
-        system:
-          `You are a subscription support agent. Current stage: ${this.stage}. ` +
-          `Use only the tools available to you. Never claim to have done ` +
-          `something you have no tool for.` +
-          (this.stage === "CONFIRMATION"
-            ? ` \n\nYou are asking for confirmation of an IRREVERSIBLE action. ` +
-              `State exactly what will happen, then ask for a clear yes or no — ` +
-              `e.g. "Reply YES to cancel, or NO to keep your subscription." ` +
-              `Do not bury the question. Do not offer a third option.`
-            : ""),
+        system: systemPromptFor(this.stage),
         tools: toolsFor(this.stage),
         messages: this.messages,
       });
