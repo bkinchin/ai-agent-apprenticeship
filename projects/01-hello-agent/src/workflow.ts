@@ -16,6 +16,8 @@ export interface TaskState {
   verifiedCustomerId?: string;
   /** Set only after get_subscription actually returned. */
   subscriptionInspected: boolean;
+  /** Set only after offer_retention actually ran. */
+  retentionOffered?: boolean;
   /**
    * Set only from a user turn that arrived AFTER the agent described
    * this exact action. Records WHAT was confirmed, not just that
