@@ -1,4 +1,4 @@
-import { InMemorySessionStore } from "./session.js";
+import { InMemorySessionStore } from "../core/session.js";
 
 const store = new InMemorySessionStore();
 

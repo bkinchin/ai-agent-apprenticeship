@@ -5,9 +5,9 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { auditLog, runTool, TOOL_SPECS, type ToolContext, type World } from "./executor.js";
-import { loadPolicy } from "./policy.js";
-import { canTransition, restart, STAGE_TOOLS, type Stage, type TaskState } from "./workflow.js";
+import { auditLog, runTool, TOOL_SPECS, type ToolContext, type World } from "../core/executor.js";
+import { loadPolicy } from "../core/policy.js";
+import { canTransition, restart, STAGE_TOOLS, type Stage, type TaskState } from "../core/workflow.js";
 
 const client = new Anthropic();
 const MODEL = "claude-opus-5";

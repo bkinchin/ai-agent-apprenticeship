@@ -1,4 +1,4 @@
-import { SqliteSessionStore } from "./sqlite-store.js";
+import { SqliteSessionStore } from "../core/sqlite-store.js";
 
 const store = new SqliteSessionStore();
 

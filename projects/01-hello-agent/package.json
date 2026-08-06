@@ -4,11 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx --env-file=../../.env.local src/index.ts",
-    "typecheck": "tsc --noEmit",
-    "chat": "tsx --env-file=../../.env.local src/chat.ts",
-    "scenarios": "tsx --env-file=../../.env.local src/agent.ts",
-    "test": "tsx --test src/*.test.ts"
+    "chat": "tsx --env-file=../../.env.local src/run/chat.ts",
+    "scenarios": "tsx --env-file=../../.env.local src/run/scenarios.ts",
+    "test": "tsx --test src/core/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.0",

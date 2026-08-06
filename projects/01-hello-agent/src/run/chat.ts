@@ -11,10 +11,10 @@
 //   /exit
 
 import readline from "node:readline/promises";
-import { auditLog, TOOL_SPECS } from "./executor.js";
-import { listRules, loadPolicy } from "./policy.js";
-import { Conversation, freshWorld } from "./conversation.js";
-import { STAGE_TOOLS } from "./workflow.js";
+import { auditLog, TOOL_SPECS } from "../core/executor.js";
+import { listRules, loadPolicy } from "../core/policy.js";
+import { Conversation, freshWorld } from "../core/conversation.js";
+import { STAGE_TOOLS } from "../core/workflow.js";
 
 const policy = loadPolicy();
 let convo = new Conversation(policy, freshWorld());

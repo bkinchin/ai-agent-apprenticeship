@@ -3,8 +3,8 @@
 
 import readline from "node:readline/promises";
 import Anthropic from "@anthropic-ai/sdk";
-import { assemble } from "./context.js";
-import { SqliteSessionStore } from "./sqlite-store.js";
+import { assemble } from "../core/context.js";
+import { SqliteSessionStore } from "../core/sqlite-store.js";
 
 const client = new Anthropic(); // reads ANTHROPIC_API_KEY from the environment
 const MODEL = "claude-opus-5";
