@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "start": "tsx --env-file=../../.env.local src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "chat": "tsx --env-file=../../.env.local src/chat.ts",
+    "scenarios": "tsx --env-file=../../.env.local src/agent.ts",
+    "test": "tsx --test src/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.0",
