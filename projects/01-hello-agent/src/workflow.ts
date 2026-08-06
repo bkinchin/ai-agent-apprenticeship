@@ -34,9 +34,9 @@ export interface TaskState {
 
 /** Which tools exist in each stage. Anything not listed cannot be called. */
 export const STAGE_TOOLS: Record<Stage, string[]> = {
-  GREETING: ["find_customer"],
-  VERIFICATION: ["find_customer", "verify_customer"],
-  INSPECTION: ["get_subscription"],
+  GREETING: ["verify_identity"],
+  VERIFICATION: ["verify_identity"],
+  INSPECTION: ["get_subscription", "offer_retention"],
   CONFIRMATION: [], // conversation only — nothing to call here
   EXECUTION: ["cancel_subscription"],
   COMPLETE: [],

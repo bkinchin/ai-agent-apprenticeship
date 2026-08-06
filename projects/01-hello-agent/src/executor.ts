@@ -33,17 +33,17 @@ export interface AuditEntry {
 
 export const TOOL_SPECS = [
   {
-    name: "find_customer",
-    description: "Look up a customer by email address. Returns their ID and name.",
-    schema: z.object({ email: z.email().describe("The customer's email address") }),
-  },
-  {
-    name: "verify_customer",
+    // Lookup and verification are ONE step, on purpose. A separate lookup
+    // tool would confirm to an unverified stranger whether an email
+    // belongs to a customer, and who they are.
+    name: "verify_identity",
     description:
-      "Verify identity by checking a date of birth against our records. " +
-      "Required before any account details can be discussed.",
+      "Verify a customer using their email address and date of birth together. " +
+      "Ask for both before calling this. If verification fails you will get a " +
+      "generic failure message — do not speculate about which detail was wrong, " +
+      "and do not confirm or deny whether an account exists.",
     schema: z.object({
-      customerId: z.string().regex(/^CUST-\d{4}$/),
+      email: z.email().describe("The email address on the account"),
       dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("YYYY-MM-DD"),
     }),
   },
@@ -64,20 +64,28 @@ export const TOOL_SPECS = [
   },
 ] as const;
 
+/**
+ * The single failure message for identity verification.
+ *
+ * Exported ONLY so tests can assert that every failure path returns
+ * exactly this. It must not vary by reason — "no such account" and
+ * "wrong date of birth" have to look identical from outside.
+ */
+export const VERIFY_FAILED =
+  "I could not verify those details. Please check the email address and " +
+  "date of birth and try again.";
+
 // ── Private. Nothing outside this file can reach these. ───────────
 const IMPLEMENTATIONS: Record<string, (args: any, ctx: ToolContext) => string> = {
-  find_customer: ({ email }, { world }) => {
+  verify_identity: ({ email, dateOfBirth }, { world, state }) => {
     const c = world.customers.find((x) => x.email === email);
-    return c ? JSON.stringify({ id: c.id, name: c.name }) : `No customer with email ${email}.`;
-  },
 
-  verify_customer: ({ customerId, dateOfBirth }, { world, state }) => {
-    const c = world.customers.find((x) => x.id === customerId);
-    const matches = c !== undefined && c.dob === dateOfBirth;
-    if (matches) state.verifiedCustomerId = customerId; // evidence, written by code
-    return matches
-      ? "Identity confirmed."
-      : "Those details do not match. Do not disclose any account information.";
+    // ★ ONE failure path. A wrong date of birth and a non-existent account
+    //   must be indistinguishable, or the failure itself is the disclosure.
+    if (!c || c.dob !== dateOfBirth) return VERIFY_FAILED;
+
+    state.verifiedCustomerId = c.id; // evidence, written by code
+    return JSON.stringify({ verified: true, customerId: c.id, name: c.name });
   },
 
   get_subscription: ({ customerId }, { world, state }) => {
