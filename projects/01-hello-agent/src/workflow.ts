@@ -89,8 +89,16 @@ export function canTransition(from: Stage, to: Stage, state: TaskState): Guard {
     return { ok: false, reason: "Customer is not verified." };
   }
 
-  if (to === "CONFIRMATION" && !state.subscriptionInspected) {
-    return { ok: false, reason: "Subscription has not been inspected." };
+  if (to === "CONFIRMATION") {
+    if (!state.subscriptionInspected) {
+      return { ok: false, reason: "Subscription has not been inspected." };
+    }
+    // Mirrors commercial.yaml/retention-before-cancel. Without this the
+    // machine walks the customer to EXECUTION down a path where policy
+    // will refuse — a happy path that cannot complete.
+    if (!state.retentionOffered) {
+      return { ok: false, reason: "Retention has not been offered." };
+    }
   }
 
   if (to === "EXECUTION") {

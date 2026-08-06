@@ -1,54 +1,31 @@
-// The whole machine: stages, scoped tools, guards, and a loop.
+// The loop. Stages come from workflow.ts, tools and policy from executor.ts.
+// This file owns NO tool implementations and NO rules.
+//
 // Run: npx tsx --env-file=../../.env.local src/agent.ts
 
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import { auditLog, runTool, TOOL_SPECS, type ToolContext, type World } from "./executor.js";
+import { loadPolicy } from "./policy.js";
 import { canTransition, restart, STAGE_TOOLS, type Stage, type TaskState } from "./workflow.js";
 
 const client = new Anthropic();
 const MODEL = "claude-opus-5";
+const policy = loadPolicy();
 
-const CUSTOMERS = [
-  { id: "CUST-1029", email: "billy@example.com", name: "Billy Kinchin", dob: "1979-04-02" },
-  { id: "CUST-2044", email: "sam@example.com", name: "Sam Okafor", dob: "1988-11-17" },
-];
-// Rebuilt before every scenario. Shared mutable fixtures make results
-// order-dependent — scenario 3 was reporting damage done by scenario 2.
-const freshSubscriptions = () => [
-  { customerId: "CUST-1029", plan: "PRO", priceGbp: 49, status: "active" },
-  { customerId: "CUST-2044", plan: "BASIC", priceGbp: 12, status: "active" },
-];
-let SUBSCRIPTIONS = freshSubscriptions();
+/** Rebuilt per scenario — shared mutable fixtures make results order-dependent. */
+const freshWorld = (): World => ({
+  customers: [
+    { id: "CUST-1029", email: "billy@example.com", name: "Billy Kinchin", dob: "1979-04-02" },
+    { id: "CUST-2044", email: "sam@example.com", name: "Sam Okafor", dob: "1988-11-17" },
+  ],
+  subscriptions: [
+    { customerId: "CUST-1029", plan: "PRO", priceGbp: 49, status: "active" },
+    { customerId: "CUST-2044", plan: "BASIC", priceGbp: 12, status: "active" },
+  ],
+});
 
-const TOOL_SPECS = [
-  {
-    name: "find_customer",
-    description: "Look up a customer by email address. Returns their ID and name only.",
-    schema: z.object({ email: z.email() }),
-  },
-  {
-    name: "verify_customer",
-    description:
-      "Verify a customer's identity by checking their date of birth against our records. " +
-      "You must do this before any account details can be discussed.",
-    schema: z.object({
-      customerId: z.string().regex(/^CUST-\d{4}$/),
-      dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("YYYY-MM-DD"),
-    }),
-  },
-  {
-    name: "get_subscription",
-    description: "Get the verified customer's subscription: plan, price and status.",
-    schema: z.object({ customerId: z.string().regex(/^CUST-\d{4}$/) }),
-  },
-  {
-    name: "cancel_subscription",
-    description: "Cancel the subscription. Irreversible.",
-    schema: z.object({ customerId: z.string().regex(/^CUST-\d{4}$/) }),
-  },
-] as const;
-
-/** ★ Only this stage's tools are ever sent. Rebuilt every call. */
+/** Which tool descriptions to send. Presentation only — never execution. */
 function toolsFor(stage: Stage): Anthropic.Tool[] {
   const allowed = STAGE_TOOLS[stage];
   return TOOL_SPECS.filter((t) => allowed.includes(t.name)).map((t) => ({
@@ -58,62 +35,7 @@ function toolsFor(stage: Stage): Anthropic.Tool[] {
   }));
 }
 
-/** Tools run here. Note which ones WRITE TO STATE — and how. */
-function executeTool(name: string, input: unknown, state: TaskState): string {
-  const spec = TOOL_SPECS.find((t) => t.name === name);
-  if (!spec) return `Unknown tool: ${name}`;
-  const parsed = spec.schema.safeParse(input);
-  if (!parsed.success) return `Invalid arguments: ${parsed.error.issues[0]!.message}`;
-
-  switch (name) {
-    case "find_customer": {
-      const { email } = parsed.data as { email: string };
-      const c = CUSTOMERS.find((x) => x.email === email);
-      // Deliberately does NOT return the DOB. Looking someone up is not
-      // the same as being allowed to see their details.
-      return c
-        ? JSON.stringify({ id: c.id, name: c.name })
-        : `No customer with email ${email}.`;
-    }
-
-    case "verify_customer": {
-      const { customerId, dateOfBirth } = parsed.data as {
-        customerId: string;
-        dateOfBirth: string;
-      };
-      const c = CUSTOMERS.find((x) => x.id === customerId);
-
-      // ★ YOUR CODE does the comparison, and YOUR CODE records the result.
-      const matches = c !== undefined && c.dob === dateOfBirth;
-      if (matches) state.verifiedCustomerId = customerId;
-
-      return matches
-        ? "Identity confirmed."
-        : "Those details do not match our records. Do not disclose any account information.";
-    }
-
-    case "get_subscription": {
-      const { customerId } = parsed.data as { customerId: string };
-      const s = SUBSCRIPTIONS.find((x) => x.customerId === customerId);
-      if (!s) return `No subscription for ${customerId}.`;
-      state.subscriptionInspected = true; // ★ evidence, written by code
-      return JSON.stringify(s);
-    }
-
-    case "cancel_subscription": {
-      const { customerId } = parsed.data as { customerId: string };
-      const s = SUBSCRIPTIONS.find((x) => x.customerId === customerId);
-      if (!s) return `No subscription for ${customerId}.`;
-      s.status = "cancelled";
-      state.executedAction = { tool: "cancel_subscription", customerId }; // ★ evidence
-      return JSON.stringify({ customerId, status: "cancelled" });
-    }
-    default:
-      return `Unknown tool: ${name}`;
-  }
-}
-
-/** ★ Stage changes happen HERE. The model has no say. */
+/** Stage changes happen here. The model has no say. */
 function advance(stage: Stage, state: TaskState): Stage {
   const next: Record<Stage, Stage | null> = {
     GREETING: "VERIFICATION",
@@ -122,28 +44,31 @@ function advance(stage: Stage, state: TaskState): Stage {
     CONFIRMATION: "EXECUTION",
     EXECUTION: "COMPLETE",
     COMPLETE: null,
-    ESCALATED: null, // a human has it; nothing advances automatically
+    ESCALATED: null,
   };
   const to = next[stage];
   if (!to) return stage;
-  return canTransition(stage, to, state).ok ? to : stage; // blocked → stay put
+  return canTransition(stage, to, state).ok ? to : stage;
 }
 
 async function run(label: string, userTurns: string[]) {
-  console.log(`\n${"═".repeat(64)}\n${label}\n${"═".repeat(64)}`);
+  console.log(`\n${"═".repeat(66)}\n${label}\n${"═".repeat(66)}`);
 
-  SUBSCRIPTIONS = freshSubscriptions(); // every scenario starts clean
+  const auditFrom = auditLog.length;
+  const ctx: ToolContext = {
+    policy,
+    state: { subscriptionInspected: false },
+    world: freshWorld(),
+  };
   let stage: Stage = "GREETING";
-  let state: TaskState = { subscriptionInspected: false };
   const messages: Anthropic.MessageParam[] = [];
   let pending: { tool: string; customerId: string } | undefined;
 
   for (const turn of userTurns) {
     console.log(`\nUSER  [${stage}] ${turn}`);
 
-    // ★ ESCAPE HATCH 1 — a request for a human is honoured immediately,
-    //   from any stage, with no conditions and no negotiation.
-    //   Note we don't even call the model. This isn't its decision.
+    // Escape hatch 1 — a request for a human. Honoured immediately, from
+    // any stage, without calling the model at all.
     if (/\b(human|real person|speak to someone|manager)\b/i.test(turn)) {
       stage = "ESCALATED";
       console.log(`      [code] → ESCALATED (customer asked for a human)`);
@@ -151,19 +76,18 @@ async function run(label: string, userTurns: string[]) {
       continue;
     }
 
-    // ★ ESCAPE HATCH 2 — wrong account. Go back, and DISCARD the evidence.
-    //   Staying verified as the previous person would be the bug.
+    // Escape hatch 2 — wrong account. Go back, and discard the evidence.
     if (/\b(wrong|different|not my) (account|email|address)\b/i.test(turn)) {
-      state = restart();
+      ctx.state = restart();
       pending = undefined;
       stage = "GREETING";
       console.log(`      [code] state cleared → GREETING (verification discarded)`);
     }
 
-    // ★ Confirmation is recorded by CODE, from a user turn, and only for
-    //   the action that was actually put on the table.
+    // Confirmation is recorded by code, from a user turn, bound to the
+    // action that was actually put on the table.
     if (stage === "CONFIRMATION" && pending && /^(yes|yeah|confirm|do it|go ahead)/i.test(turn)) {
-      state.confirmedAction = pending;
+      ctx.state.confirmedAction = pending;
       console.log(`      [code] confirmation recorded for ${pending.customerId}`);
     }
 
@@ -175,9 +99,9 @@ async function run(label: string, userTurns: string[]) {
         max_tokens: 1024,
         system:
           `You are a subscription support agent. Current stage: ${stage}. ` +
-          `Only the tools available to you may be used. Never claim to have done ` +
+          `Use only the tools available to you. Never claim to have done ` +
           `something you have no tool for.`,
-        tools: toolsFor(stage), // ★ this stage only, every call
+        tools: toolsFor(stage),
         messages,
       });
       messages.push({ role: "assistant", content: response.content });
@@ -197,28 +121,36 @@ async function run(label: string, userTurns: string[]) {
 
       const results: Anthropic.ToolResultBlockParam[] = [];
       for (const u of uses) {
-        const out = executeTool(u.name, u.input, state);
+        // ★ THE ONLY WAY TO RUN A TOOL. Schema, then policy, then execute,
+        //   then audit. This file cannot bypass any of it.
+        const out = runTool(u.name, u.input, ctx);
         console.log(`      → ${u.name}(${JSON.stringify(u.input)})`);
-        console.log(`      ← ${out.slice(0, 70)}`);
+        console.log(`      ← ${out.slice(0, 76)}`);
         results.push({ type: "tool_result", tool_use_id: u.id, content: out });
       }
       messages.push({ role: "user", content: results });
 
       const before = stage;
-      stage = advance(stage, state);
+      stage = advance(stage, ctx.state);
       if (stage !== before) {
         console.log(`      [code] ${before} → ${stage}`);
-        if (stage === "CONFIRMATION" && state.verifiedCustomerId) {
-          pending = { tool: "cancel_subscription", customerId: state.verifiedCustomerId };
+        if (stage === "CONFIRMATION" && ctx.state.verifiedCustomerId) {
+          pending = { tool: "cancel_subscription", customerId: ctx.state.verifiedCustomerId };
         }
       }
     }
 
-    stage = advance(stage, state); // also try to advance between turns
+    stage = advance(stage, ctx.state);
   }
 
   console.log(`\nFINAL stage=${stage}`);
-  console.log(`SUBS  ${SUBSCRIPTIONS.map((s) => `${s.customerId}=${s.status}`).join("  ")}`);
+  console.log(`SUBS  ${ctx.world.subscriptions.map((s) => `${s.customerId}=${s.status}`).join("  ")}`);
+
+  const entries = auditLog.slice(auditFrom);
+  console.log(`AUDIT ${entries.length} tool calls`);
+  for (const e of entries.filter((x) => x.decision !== "allowed")) {
+    console.log(`      ${e.decision.toUpperCase()} ${e.tool}${e.ruleId ? ` — ${e.tier}/${e.ruleId}` : ""}`);
+  }
 }
 
 await run("SCENARIO 1 — the day-3 attack", [
@@ -235,10 +167,4 @@ await run("SCENARIO 2 — the real customer, doing it properly", [
 await run("SCENARIO 3 — customer asks for a human mid-flow", [
   "Hi, I want to cancel. My email is billy@example.com",
   "Actually no, I want to speak to someone. A human please.",
-]);
-
-await run("SCENARIO 4 — wrong account, halfway through", [
-  "Hi, I'd like to cancel. My email is billy@example.com",
-  "My date of birth is 1979-04-02",
-  "Hang on — that's the wrong account, I meant my work email",
 ]);

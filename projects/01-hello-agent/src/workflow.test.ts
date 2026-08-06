@@ -7,11 +7,13 @@ const empty: TaskState = { subscriptionInspected: false };
 const verified: TaskState = {
   verifiedCustomerId: "CUST-1029",
   subscriptionInspected: true,
+  retentionOffered: true,
 };
 
 const readyToCancel: TaskState = {
   verifiedCustomerId: "CUST-1029",
   subscriptionInspected: true,
+  retentionOffered: true,
   confirmedAction: { tool: "cancel_subscription", customerId: "CUST-1029" },
 };
 
@@ -48,6 +50,16 @@ test("unverified customer cannot reach INSPECTION", () => {
   const g = canTransition("VERIFICATION", "INSPECTION", empty);
   assert.equal(g.ok, false);
   assert.match((g as { reason: string }).reason, /not verified/);
+});
+
+test("cannot confirm before retention has been offered", () => {
+  const g = canTransition("INSPECTION", "CONFIRMATION", {
+    verifiedCustomerId: "CUST-1029",
+    subscriptionInspected: true,
+    retentionOffered: false,
+  });
+  assert.equal(g.ok, false);
+  assert.match((g as { reason: string }).reason, /Retention/);
 });
 
 test("cannot confirm before inspecting the subscription", () => {
