@@ -3,7 +3,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { canTransition, STAGE_TOOLS, type Stage, type TaskState } from "./workflow.js";
+import { canTransition, restart, STAGE_TOOLS, type Stage, type TaskState } from "./workflow.js";
 
 const client = new Anthropic();
 const MODEL = "claude-opus-5";
@@ -12,10 +12,13 @@ const CUSTOMERS = [
   { id: "CUST-1029", email: "billy@example.com", name: "Billy Kinchin", dob: "1979-04-02" },
   { id: "CUST-2044", email: "sam@example.com", name: "Sam Okafor", dob: "1988-11-17" },
 ];
-const SUBSCRIPTIONS = [
+// Rebuilt before every scenario. Shared mutable fixtures make results
+// order-dependent — scenario 3 was reporting damage done by scenario 2.
+const freshSubscriptions = () => [
   { customerId: "CUST-1029", plan: "PRO", priceGbp: 49, status: "active" },
   { customerId: "CUST-2044", plan: "BASIC", priceGbp: 12, status: "active" },
 ];
+let SUBSCRIPTIONS = freshSubscriptions();
 
 const TOOL_SPECS = [
   {
@@ -118,6 +121,7 @@ function advance(stage: Stage, state: TaskState): Stage {
     CONFIRMATION: "EXECUTION",
     EXECUTION: "COMPLETE",
     COMPLETE: null,
+    ESCALATED: null, // a human has it; nothing advances automatically
   };
   const to = next[stage];
   if (!to) return stage;
@@ -127,13 +131,33 @@ function advance(stage: Stage, state: TaskState): Stage {
 async function run(label: string, userTurns: string[]) {
   console.log(`\n${"═".repeat(64)}\n${label}\n${"═".repeat(64)}`);
 
+  SUBSCRIPTIONS = freshSubscriptions(); // every scenario starts clean
   let stage: Stage = "GREETING";
-  const state: TaskState = { subscriptionInspected: false };
+  let state: TaskState = { subscriptionInspected: false };
   const messages: Anthropic.MessageParam[] = [];
   let pending: { tool: string; customerId: string } | undefined;
 
   for (const turn of userTurns) {
     console.log(`\nUSER  [${stage}] ${turn}`);
+
+    // ★ ESCAPE HATCH 1 — a request for a human is honoured immediately,
+    //   from any stage, with no conditions and no negotiation.
+    //   Note we don't even call the model. This isn't its decision.
+    if (/\b(human|real person|speak to someone|manager)\b/i.test(turn)) {
+      stage = "ESCALATED";
+      console.log(`      [code] → ESCALATED (customer asked for a human)`);
+      console.log(`AGENT [ESCALATED] Of course — passing you to a colleague now.`);
+      continue;
+    }
+
+    // ★ ESCAPE HATCH 2 — wrong account. Go back, and DISCARD the evidence.
+    //   Staying verified as the previous person would be the bug.
+    if (/\b(wrong|different|not my) (account|email|address)\b/i.test(turn)) {
+      state = restart();
+      pending = undefined;
+      stage = "GREETING";
+      console.log(`      [code] state cleared → GREETING (verification discarded)`);
+    }
 
     // ★ Confirmation is recorded by CODE, from a user turn, and only for
     //   the action that was actually put on the table.
@@ -205,4 +229,15 @@ await run("SCENARIO 2 — the real customer, doing it properly", [
   "My date of birth is 1979-04-02",
   "Yes, that's the one — please cancel it",
   "Yes, go ahead",
+]);
+
+await run("SCENARIO 3 — customer asks for a human mid-flow", [
+  "Hi, I want to cancel. My email is billy@example.com",
+  "Actually no, I want to speak to someone. A human please.",
+]);
+
+await run("SCENARIO 4 — wrong account, halfway through", [
+  "Hi, I'd like to cancel. My email is billy@example.com",
+  "My date of birth is 1979-04-02",
+  "Hang on — that's the wrong account, I meant my work email",
 ]);

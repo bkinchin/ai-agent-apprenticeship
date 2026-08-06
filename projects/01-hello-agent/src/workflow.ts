@@ -7,7 +7,8 @@ export type Stage =
   | "INSPECTION"
   | "CONFIRMATION"
   | "EXECUTION"
-  | "COMPLETE";
+  | "COMPLETE"
+  | "ESCALATED"; // handed to a human. Terminal.
 
 /** Facts your CODE has established. Never things the model claimed. */
 export interface TaskState {
@@ -31,17 +32,41 @@ export const STAGE_TOOLS: Record<Stage, string[]> = {
   CONFIRMATION: [], // conversation only — nothing to call here
   EXECUTION: ["cancel_subscription"],
   COMPLETE: [],
+  ESCALATED: [], // a human has it now
 };
 
-/** The only moves that exist. Anything else is illegal by omission. */
-const ALLOWED_MOVES: Record<Stage, Stage[]> = {
+/** The forward path. Anything not listed is illegal by omission. */
+const FORWARD_MOVES: Record<Stage, Stage[]> = {
   GREETING: ["VERIFICATION"],
   VERIFICATION: ["INSPECTION"],
   INSPECTION: ["CONFIRMATION"],
   CONFIRMATION: ["EXECUTION"],
   EXECUTION: ["COMPLETE"],
   COMPLETE: [],
+  ESCALATED: [],
 };
+
+/** Escape hatches. Reachable from anywhere that isn't already an end. */
+const EXITS: Stage[] = ["ESCALATED"];
+const TERMINAL: Stage[] = ["COMPLETE", "ESCALATED"];
+
+const ALLOWED_MOVES: Record<Stage, Stage[]> = Object.fromEntries(
+  (Object.keys(FORWARD_MOVES) as Stage[]).map((from) => [
+    from,
+    TERMINAL.includes(from) ? FORWARD_MOVES[from] : [...FORWARD_MOVES[from], ...EXITS],
+  ]),
+) as Record<Stage, Stage[]>;
+
+/**
+ * Going backwards means discarding what got you here.
+ *
+ * If a customer says "wrong account", you cannot keep verifiedCustomerId
+ * — they would be verified as one person while discussing another.
+ * Returns a fresh state; never mutates.
+ */
+export function restart(): TaskState {
+  return { subscriptionInspected: false };
+}
 
 export type Guard = { ok: true } | { ok: false; reason: string };
 

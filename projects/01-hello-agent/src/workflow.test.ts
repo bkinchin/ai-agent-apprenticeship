@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canTransition, STAGE_TOOLS, type TaskState } from "./workflow.js";
+import { canTransition, restart, STAGE_TOOLS, type TaskState } from "./workflow.js";
 
 const empty: TaskState = { subscriptionInspected: false };
 
@@ -77,6 +77,42 @@ test("cannot go backwards", () => {
 
 test("COMPLETE is terminal", () => {
   assert.equal(canTransition("COMPLETE", "EXECUTION", readyToCancel).ok, false);
+});
+
+// ── escape hatches ───────────────────────────────────────────────
+
+test("escalation is reachable from every non-terminal stage", () => {
+  for (const from of ["GREETING", "VERIFICATION", "INSPECTION", "CONFIRMATION", "EXECUTION"] as const) {
+    assert.ok(
+      canTransition(from, "ESCALATED", empty).ok,
+      `must be able to escalate from ${from}`,
+    );
+  }
+});
+
+test("escalation needs no preconditions — an empty state still works", () => {
+  assert.ok(canTransition("GREETING", "ESCALATED", empty).ok);
+});
+
+test("ESCALATED is terminal", () => {
+  assert.equal(canTransition("ESCALATED", "EXECUTION", readyToCancel).ok, false);
+  assert.equal(canTransition("ESCALATED", "VERIFICATION", readyToCancel).ok, false);
+});
+
+test("ESCALATED exposes no tools", () => {
+  assert.deepEqual(STAGE_TOOLS.ESCALATED, []);
+});
+
+test("restart() discards verification — you cannot stay verified as the wrong person", () => {
+  const fresh = restart();
+  assert.equal(fresh.verifiedCustomerId, undefined);
+  assert.equal(fresh.confirmedAction, undefined);
+  assert.equal(fresh.subscriptionInspected, false);
+});
+
+test("after restart, EXECUTION is unreachable again", () => {
+  const fresh = restart();
+  assert.equal(canTransition("CONFIRMATION", "EXECUTION", fresh).ok, false);
 });
 
 // ── the capability itself ────────────────────────────────────────
