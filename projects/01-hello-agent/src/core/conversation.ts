@@ -4,6 +4,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { checkConfirmation, checkEscalationRequest } from "./confirmation.js";
+import { scanInput, type Flag } from "./guards.js";
 import { runTool, TOOL_SPECS, type ToolContext, type World } from "./executor.js";
 import type { Policy } from "./policy.js";
 import { canTransition, nextStages, restart, STAGE_TOOLS, type Stage, type TaskState } from "./workflow.js";
@@ -103,6 +104,8 @@ export class Conversation {
   private pending?: { tool: string; customerId: string };
   /** How many times they have asked for a person. Second ask is unconditional. */
   private humanRequests = 0;
+  /** Anything the input guard noticed, with PII already removed. */
+  readonly flagged: { flags: Flag[]; redacted: string }[] = [];
 
   constructor(policy: Policy, world: World = freshWorld()) {
     this.ctx = { policy, state: { subscriptionInspected: false }, world };
@@ -110,6 +113,19 @@ export class Conversation {
 
   async send(turn: string): Promise<TurnResult> {
     const events: string[] = [];
+
+    // Input guard. Detection and redaction only — never blocking.
+    //
+    // The model still receives the ORIGINAL text: it needs the card number
+    // to say "I can't take card details here", and redacting it would make
+    // the agent incoherent. What we control is what reaches durable
+    // storage. You cannot keep PII out of a context window; you can keep
+    // it out of a database.
+    const scan = scanInput(turn);
+    if (scan.flags.length > 0) {
+      this.flagged.push({ flags: scan.flags, redacted: scan.redacted });
+      events.push(`[guard] ${scan.flags.join(", ")} — logged as: ${scan.redacted}`);
+    }
 
     // Escape hatch 1 — a request for a human.
     //

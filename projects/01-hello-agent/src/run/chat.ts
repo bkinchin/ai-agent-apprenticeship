@@ -4,6 +4,7 @@
 //
 // Slash commands:
 //   /state   what your code currently believes (TaskState)
+//   /flags   anything the input guard noticed, PII already removed
 //   /tools   which tools exist right now
 //   /rules   every policy rule in force
 //   /audit   every tool call this session, denials included
@@ -31,7 +32,7 @@ console.log(`
 │    billy@example.com   dob 1979-04-02   PRO   £49              │
 │    sam@example.com     dob 1988-11-17   BASIC £12              │
 │                                                                │
-│  /state /tools /rules /audit /reset /exit                      │
+│  /state /tools /rules /audit /flags /reset /exit               │
 └────────────────────────────────────────────────────────────────┘
 
 Things worth trying:
@@ -66,6 +67,12 @@ while (true) {
 
   if (input === "/rules") {
     console.log(listRules(policy));
+    continue;
+  }
+
+  if (input === "/flags") {
+    if (convo.flagged.length === 0) console.log("(nothing flagged this conversation)");
+    for (const f of convo.flagged) console.log(`${f.flags.join(", ").padEnd(24)} ${f.redacted}`);
     continue;
   }
 
