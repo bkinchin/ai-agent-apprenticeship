@@ -7,7 +7,8 @@
     "chat": "tsx --env-file=../../.env.local src/run/chat.ts",
     "scenarios": "tsx --env-file=../../.env.local src/run/scenarios.ts",
     "test": "tsx --test src/core/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "eval": "tsx --env-file=../../.env.local src/run/eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.0",
