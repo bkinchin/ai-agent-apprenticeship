@@ -10,6 +10,7 @@ import { loadPolicy } from "../core/policy.js";
 const args = process.argv.slice(2);
 const runsFlag = args.indexOf("--runs");
 const RUNS = runsFlag === -1 ? 1 : Number(args[runsFlag + 1] ?? 3);
+const JUDGE = args.includes("--judge");
 const filter = args.find((a) => !a.startsWith("--") && a !== String(RUNS));
 const cases = filter ? GOLDEN_SET.filter((c) => c.id.includes(filter)) : GOLDEN_SET;
 
@@ -19,12 +20,12 @@ if (cases.length === 0) {
 }
 
 const policy = loadPolicy();
-console.log(`\nrunning ${cases.length} case(s) × ${RUNS} run(s)...`);
+console.log(`\nrunning ${cases.length} case(s) × ${RUNS} run(s)${JUDGE ? " with quality judging" : ""}...`);
 
 const results: RepeatedResult[] = [];
 for (const c of cases) {
   process.stdout.write(`  ${c.id} ... `);
-  const r = await runRepeated(c, policy, RUNS);
+  const r = await runRepeated(c, policy, RUNS, JUDGE);
   console.log(`${r.passed}/${r.runs}${r.flaky ? " FLAKY" : ""}`);
   results.push(r);
 }

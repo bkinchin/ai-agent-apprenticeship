@@ -8,6 +8,7 @@
 
 import { mark, since, type CostSummary } from "./cost.js";
 import { auditLog } from "./executor.js";
+import { judgeCapabilityClaims } from "./judge.js";
 import { Conversation, freshWorld } from "./conversation.js";
 import type { Policy } from "./policy.js";
 import type { Stage } from "./workflow.js";
@@ -46,9 +47,15 @@ export interface CaseResult {
   finalStage: Stage;
   ms: number;
   cost: CostSummary;
+  /** Only present when judging is enabled. Reported, never a gate. */
+  quality?: { claimsFalseCapability: boolean; quote: string };
 }
 
-export async function runCase(c: EvalCase, policy: Policy): Promise<CaseResult> {
+export async function runCase(
+  c: EvalCase,
+  policy: Policy,
+  judge = false,
+): Promise<CaseResult> {
   const started = Date.now();
   const auditFrom = auditLog.length; // isolate this case's calls
   const costFrom = mark();
@@ -57,7 +64,8 @@ export async function runCase(c: EvalCase, policy: Policy): Promise<CaseResult> 
   // order-dependent — found that the hard way on day 5.
   const convo = new Conversation(policy, freshWorld());
 
-  for (const turn of c.turns) await convo.send(turn);
+  let lastText = "";
+  for (const turn of c.turns) lastText = (await convo.send(turn)).text || lastText;
 
   const entries = auditLog.slice(auditFrom);
   const called = entries.filter((e) => e.decision === "allowed").map((e) => e.tool);
@@ -67,6 +75,11 @@ export async function runCase(c: EvalCase, policy: Policy): Promise<CaseResult> 
 
   const failures: string[] = [];
   const { expect } = c;
+
+  // Judged separately and NEVER added to `failures`. A fuzzy score that
+  // blocks the build gets the suite disabled; one that trends gets the
+  // agent fixed.
+  const quality = judge && lastText ? await judgeCapabilityClaims(lastText) : undefined;
 
   // ── the world ──────────────────────────────────────────────────
   for (const [customerId, expected] of Object.entries(expect.world ?? {})) {
@@ -108,6 +121,7 @@ export async function runCase(c: EvalCase, policy: Policy): Promise<CaseResult> 
     finalStage: convo.stage,
     ms: Date.now() - started,
     cost: since(costFrom),
+    ...(quality ? { quality: { claimsFalseCapability: quality.claimsFalseCapability, quote: quality.quote } } : {}),
   };
 }
 
@@ -123,6 +137,9 @@ export interface RepeatedResult {
   avgMs: number;
   /** Cost of ONE run — the per-conversation figure, not the total. */
   cost: CostSummary;
+  /** How many runs the judge flagged. Reported, never blocking. */
+  flaggedByJudge: number;
+  judgeQuote: string;
 }
 
 /**
@@ -137,9 +154,10 @@ export async function runRepeated(
   c: EvalCase,
   policy: Policy,
   runs: number,
+  judge = false,
 ): Promise<RepeatedResult> {
   const results: CaseResult[] = [];
-  for (let i = 0; i < runs; i++) results.push(await runCase(c, policy));
+  for (let i = 0; i < runs; i++) results.push(await runCase(c, policy, judge));
 
   const passed = results.filter((r) => r.pass).length;
   const failures = results.filter((r) => !r.pass);
@@ -153,6 +171,8 @@ export async function runRepeated(
     flaky: passed > 0 && passed < runs,
     avgMs: results.reduce((a, r) => a + r.ms, 0) / runs,
     cost: results[0]!.cost,
+    flaggedByJudge: results.filter((r) => r.quality?.claimsFalseCapability).length,
+    judgeQuote: results.find((r) => r.quality?.claimsFalseCapability)?.quality?.quote ?? "",
   };
 }
 
@@ -170,6 +190,9 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
     if (!clean) {
       console.log(`     worst run called: ${r.worst.called.join(" → ") || "(none)"}`);
       for (const f of r.worst.failures) console.log(`     ↳ ${f}`);
+    }
+    if (r.flaggedByJudge > 0) {
+      console.log(`     ⚑ capability claim (${r.flaggedByJudge}/${r.runs}): "${r.judgeQuote.slice(0, 60)}"`);
     }
   }
 
@@ -201,6 +224,14 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
   if (flaky.length) {
     console.log(`${flaky.length} flaky — passed sometimes. Investigate; do not re-run until green.`);
   }
+  const judged = results.filter((r) => r.flaggedByJudge > 0);
+  if (judged.length) {
+    console.log(
+      `\n⚑ ${judged.length} case(s) flagged by the judge for capability claims.` +
+        `\n  Reported, not blocking — the judge agrees with a human 92% of the time.`,
+    );
+  }
+
   if (criticalFails.length) {
     console.log(`\n${criticalFails.length} CRITICAL failure(s) — this must not ship.`);
   }
