@@ -72,6 +72,13 @@ export const TOOL_SPECS = [
     }),
   },
   {
+    name: "apply_retention",
+    description:
+      "Apply the retention offer to the customer's account. Use when they accept it. " +
+      "This ends the conversation happily — no cancellation is needed.",
+    schema: z.object({ customerId: z.string().regex(/^CUST-\d{4}$/) }),
+  },
+  {
     name: "cancel_subscription",
     description: "Cancel the subscription. Irreversible.",
     schema: z.object({ customerId: z.string().regex(/^CUST-\d{4}$/) }),
@@ -119,6 +126,14 @@ const IMPLEMENTATIONS: Record<string, (args: any, ctx: ToolContext) => string> =
   escalate_to_human: ({ reason, summary }, { state }) => {
     state.escalated = { reason, summary };
     return JSON.stringify({ escalated: true, reference: `ESC-${Date.now().toString(36).toUpperCase()}` });
+  },
+
+  apply_retention: ({ customerId }, { world, state }) => {
+    const s = world.subscriptions.find((x) => x.customerId === customerId);
+    if (!s) return `No subscription for ${customerId}.`;
+    s.priceGbp = s.priceGbp / 2;
+    state.executedAction = { tool: "apply_retention", customerId };
+    return JSON.stringify({ customerId, newPriceGbp: s.priceGbp, months: 3 });
   },
 
   cancel_subscription: ({ customerId }, { world, state }) => {

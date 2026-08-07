@@ -7,7 +7,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { auditLog, runTool, TOOL_SPECS, type ToolContext, type World } from "../core/executor.js";
 import { loadPolicy } from "../core/policy.js";
-import { canTransition, restart, STAGE_TOOLS, type Stage, type TaskState } from "../core/workflow.js";
+import { canTransition, nextStages, restart, STAGE_TOOLS, type Stage, type TaskState } from "../core/workflow.js";
 
 const client = new Anthropic();
 const MODEL = "claude-opus-5";
@@ -37,18 +37,13 @@ function toolsFor(stage: Stage): Anthropic.Tool[] {
 
 /** Stage changes happen here. The model has no say. */
 function advance(stage: Stage, state: TaskState): Stage {
-  const next: Record<Stage, Stage | null> = {
-    GREETING: "VERIFICATION",
-    VERIFICATION: "INSPECTION",
-    INSPECTION: "CONFIRMATION",
-    CONFIRMATION: "EXECUTION",
-    EXECUTION: "COMPLETE",
-    COMPLETE: null,
-    ESCALATED: null,
-  };
-  const to = next[stage];
-  if (!to) return stage;
-  return canTransition(stage, to, state).ok ? to : stage;
+  // Try each forward option in order. RETENTION branches — decline leads to
+  // CONFIRMATION, accepting leads straight to COMPLETE — so a single "next"
+  // stage per stage is no longer enough.
+  for (const to of nextStages(stage)) {
+    if (canTransition(stage, to, state).ok) return to;
+  }
+  return stage;
 }
 
 async function run(label: string, userTurns: string[]) {

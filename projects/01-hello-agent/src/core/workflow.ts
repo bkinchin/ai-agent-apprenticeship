@@ -5,6 +5,7 @@ export type Stage =
   | "GREETING"
   | "VERIFICATION"
   | "INSPECTION"
+  | "RETENTION"
   | "CONFIRMATION"
   | "EXECUTION"
   | "COMPLETE"
@@ -18,6 +19,8 @@ export interface TaskState {
   subscriptionInspected: boolean;
   /** Set only after offer_retention actually ran. */
   retentionOffered?: boolean;
+  /** Set only when the customer explicitly turned the offer down. */
+  retentionDeclined?: boolean;
   /**
    * Set only from a user turn that arrived AFTER the agent described
    * this exact action. Records WHAT was confirmed, not just that
@@ -40,7 +43,8 @@ const ALWAYS = ["escalate_to_human"]; // the agent's exit, from anywhere
 export const STAGE_TOOLS: Record<Stage, string[]> = {
   GREETING: ["verify_identity", ...ALWAYS],
   VERIFICATION: ["verify_identity", ...ALWAYS],
-  INSPECTION: ["get_subscription", "offer_retention", ...ALWAYS],
+  INSPECTION: ["get_subscription", ...ALWAYS],
+  RETENTION: ["offer_retention", "apply_retention", ...ALWAYS],
   CONFIRMATION: [...ALWAYS], // otherwise a stuck customer has no way out
   EXECUTION: ["cancel_subscription", ...ALWAYS],
   COMPLETE: [],
@@ -51,7 +55,8 @@ export const STAGE_TOOLS: Record<Stage, string[]> = {
 const FORWARD_MOVES: Record<Stage, Stage[]> = {
   GREETING: ["VERIFICATION"],
   VERIFICATION: ["INSPECTION"],
-  INSPECTION: ["CONFIRMATION"],
+  INSPECTION: ["RETENTION"],
+  RETENTION: ["CONFIRMATION", "COMPLETE"], // decline -> cancel, or accept -> done
   CONFIRMATION: ["EXECUTION"],
   EXECUTION: ["COMPLETE"],
   COMPLETE: [],
@@ -93,15 +98,19 @@ export function canTransition(from: Stage, to: Stage, state: TaskState): Guard {
     return { ok: false, reason: "Customer is not verified." };
   }
 
+  if (to === "RETENTION" && !state.subscriptionInspected) {
+    return { ok: false, reason: "Subscription has not been inspected." };
+  }
+
   if (to === "CONFIRMATION") {
-    if (!state.subscriptionInspected) {
-      return { ok: false, reason: "Subscription has not been inspected." };
-    }
-    // Mirrors commercial.yaml/retention-before-cancel. Without this the
-    // machine walks the customer to EXECUTION down a path where policy
-    // will refuse — a happy path that cannot complete.
     if (!state.retentionOffered) {
       return { ok: false, reason: "Retention has not been offered." };
+    }
+    // The OFFER having been made is not the same as the customer having
+    // considered it. Presenting a discount and a cancellation prompt in
+    // one breath satisfies the rule and defeats its purpose.
+    if (!state.retentionDeclined) {
+      return { ok: false, reason: "Customer has not declined the retention offer." };
     }
   }
 
@@ -127,6 +136,16 @@ export function canTransition(from: Stage, to: Stage, state: TaskState): Guard {
   }
 
   return { ok: true };
+}
+
+/**
+ * The forward options from a stage, in preference order. Excludes the
+ * escape hatches deliberately — ESCALATED has no preconditions, so an
+ * automatic advance that considered it would escalate every conversation
+ * immediately. Exits are taken on purpose, never by drift.
+ */
+export function nextStages(stage: Stage): Stage[] {
+  return FORWARD_MOVES[stage];
 }
 
 /** Which tools to send to the model right now. */

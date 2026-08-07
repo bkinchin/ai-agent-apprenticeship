@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canTransition, restart, STAGE_TOOLS, type TaskState } from "./workflow.js";
+import { canTransition, nextStages, restart, STAGE_TOOLS, type TaskState } from "./workflow.js";
 
 const empty: TaskState = { subscriptionInspected: false };
 
@@ -8,12 +8,14 @@ const verified: TaskState = {
   verifiedCustomerId: "CUST-1029",
   subscriptionInspected: true,
   retentionOffered: true,
+  retentionDeclined: true,
 };
 
 const readyToCancel: TaskState = {
   verifiedCustomerId: "CUST-1029",
   subscriptionInspected: true,
   retentionOffered: true,
+  retentionDeclined: true,
   confirmedAction: { tool: "cancel_subscription", customerId: "CUST-1029" },
 };
 
@@ -27,7 +29,8 @@ const executed: TaskState = {
 test("the intended route is legal at each step", () => {
   assert.ok(canTransition("GREETING", "VERIFICATION", empty).ok);
   assert.ok(canTransition("VERIFICATION", "INSPECTION", verified).ok);
-  assert.ok(canTransition("INSPECTION", "CONFIRMATION", verified).ok);
+  assert.ok(canTransition("INSPECTION", "RETENTION", verified).ok);
+  assert.ok(canTransition("RETENTION", "CONFIRMATION", verified).ok);
   assert.ok(canTransition("CONFIRMATION", "EXECUTION", readyToCancel).ok);
   assert.ok(canTransition("EXECUTION", "COMPLETE", executed).ok);
 });
@@ -53,21 +56,42 @@ test("unverified customer cannot reach INSPECTION", () => {
 });
 
 test("cannot confirm before retention has been offered", () => {
-  const g = canTransition("INSPECTION", "CONFIRMATION", {
+  const g = canTransition("RETENTION", "CONFIRMATION", {
     verifiedCustomerId: "CUST-1029",
     subscriptionInspected: true,
     retentionOffered: false,
   });
   assert.equal(g.ok, false);
-  assert.match((g as { reason: string }).reason, /Retention/);
+  assert.match((g as { reason: string }).reason, /Retention has not been offered/);
 });
 
-test("cannot confirm before inspecting the subscription", () => {
-  const g = canTransition("INSPECTION", "CONFIRMATION", {
+test("OFFERING retention is not the same as the customer DECLINING it", () => {
+  const g = canTransition("RETENTION", "CONFIRMATION", {
+    verifiedCustomerId: "CUST-1029",
+    subscriptionInspected: true,
+    retentionOffered: true,
+    retentionDeclined: false,
+  });
+  assert.equal(g.ok, false);
+  assert.match((g as { reason: string }).reason, /not declined/);
+});
+
+test("cannot reach RETENTION before inspecting the subscription", () => {
+  const g = canTransition("INSPECTION", "RETENTION", {
     verifiedCustomerId: "CUST-1029",
     subscriptionInspected: false,
   });
   assert.equal(g.ok, false);
+});
+
+test("accepting the offer is a valid ending — RETENTION goes straight to COMPLETE", () => {
+  const accepted: TaskState = {
+    verifiedCustomerId: "CUST-1029",
+    subscriptionInspected: true,
+    retentionOffered: true,
+    executedAction: { tool: "apply_retention", customerId: "CUST-1029" },
+  };
+  assert.ok(canTransition("RETENTION", "COMPLETE", accepted).ok);
 });
 
 test("cannot execute without a confirmation", () => {
@@ -105,7 +129,7 @@ test("cannot report COMPLETE if nothing was executed", () => {
 // ── escape hatches ───────────────────────────────────────────────
 
 test("escalation is reachable from every non-terminal stage", () => {
-  for (const from of ["GREETING", "VERIFICATION", "INSPECTION", "CONFIRMATION", "EXECUTION"] as const) {
+  for (const from of ["GREETING", "VERIFICATION", "INSPECTION", "RETENTION", "CONFIRMATION", "EXECUTION"] as const) {
     assert.ok(
       canTransition(from, "ESCALATED", empty).ok,
       `must be able to escalate from ${from}`,
@@ -148,10 +172,22 @@ test("cancel_subscription exists in exactly one stage", () => {
 });
 
 test("no write tool is reachable before EXECUTION", () => {
-  for (const stage of ["GREETING", "VERIFICATION", "INSPECTION", "CONFIRMATION"] as const) {
+  for (const stage of ["GREETING", "VERIFICATION", "INSPECTION", "RETENTION", "CONFIRMATION"] as const) {
     assert.ok(
       !STAGE_TOOLS[stage].includes("cancel_subscription"),
       `${stage} must not expose cancel_subscription`,
     );
+  }
+});
+
+// ── branching ────────────────────────────────────────────────────
+
+test("RETENTION branches: decline leads to CONFIRMATION, accept to COMPLETE", () => {
+  assert.deepEqual(nextStages("RETENTION"), ["CONFIRMATION", "COMPLETE"]);
+});
+
+test("nextStages excludes escape hatches — otherwise everything auto-escalates", () => {
+  for (const s of ["GREETING", "VERIFICATION", "INSPECTION", "RETENTION", "CONFIRMATION", "EXECUTION"] as const) {
+    assert.ok(!nextStages(s).includes("ESCALATED"), `${s} must not drift into ESCALATED`);
   }
 });

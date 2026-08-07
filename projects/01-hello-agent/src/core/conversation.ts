@@ -6,7 +6,7 @@ import { z } from "zod";
 import { checkConfirmation } from "./confirmation.js";
 import { runTool, TOOL_SPECS, type ToolContext, type World } from "./executor.js";
 import type { Policy } from "./policy.js";
-import { canTransition, restart, STAGE_TOOLS, type Stage, type TaskState } from "./workflow.js";
+import { canTransition, nextStages, restart, STAGE_TOOLS, type Stage, type TaskState } from "./workflow.js";
 
 const client = new Anthropic();
 const MODEL = "claude-opus-5";
@@ -34,18 +34,13 @@ function toolsFor(stage: Stage): Anthropic.Tool[] {
 
 /** Stage changes happen here. The model has no say. */
 function advance(stage: Stage, state: TaskState): Stage {
-  const next: Record<Stage, Stage | null> = {
-    GREETING: "VERIFICATION",
-    VERIFICATION: "INSPECTION",
-    INSPECTION: "CONFIRMATION",
-    CONFIRMATION: "EXECUTION",
-    EXECUTION: "COMPLETE",
-    COMPLETE: null,
-    ESCALATED: null,
-  };
-  const to = next[stage];
-  if (!to) return stage;
-  return canTransition(stage, to, state).ok ? to : stage;
+  // Try each forward option in order. RETENTION branches — decline leads to
+  // CONFIRMATION, accepting leads straight to COMPLETE — so a single "next"
+  // stage per stage is no longer enough.
+  for (const to of nextStages(stage)) {
+    if (canTransition(stage, to, state).ok) return to;
+  }
+  return stage;
 }
 
 /**
@@ -80,6 +75,12 @@ function systemPromptFor(stage: Stage): string {
     "",
     "Use only the tools available to you. Never claim to have done something",
     "you have no tool for. It is fine to say you don't know something.",
+    stage === "RETENTION"
+      ? "\nPresent the retention offer and ASK whether they want it. Do not ask\n" +
+        "about cancelling in the same message — one decision at a time. If they\n" +
+        "accept, use apply_retention. If they decline, say you'll proceed to\n" +
+        "cancellation and stop there."
+      : "",
     stage === "CONFIRMATION"
       ? "\nThis is an IRREVERSIBLE action. State exactly what will happen, then\n" +
         "ask for a clear yes or no — e.g. 'Reply YES to cancel, or NO to keep\n" +
@@ -122,6 +123,20 @@ export class Conversation {
       this.pending = undefined;
       this.stage = "GREETING";
       events.push("[code] state cleared → GREETING (verification discarded)");
+    }
+
+    // Did they turn the offer down? Same pattern as confirmation: a narrow
+    // question, answered in isolation, recorded by code. "Offered" and
+    // "declined" are different facts and only the second unlocks cancelling.
+    if (this.stage === "RETENTION" && this.ctx.state.retentionOffered) {
+      const check = await checkConfirmation(
+        "Turn down the retention offer and go ahead with cancelling the subscription.",
+        turn,
+      );
+      if (check.affirms) {
+        this.ctx.state.retentionDeclined = true;
+        events.push(`[code] retention offer declined — "${check.quote}"`);
+      }
     }
 
     // Confirmation. The model answers one narrow question in isolation;
