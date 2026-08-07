@@ -33,13 +33,24 @@ const Verdict = z.object({
   quote: z
     .string()
     .describe("The exact words that made the claim. Empty string if none."),
-  reason: z.string().max(200).describe("One sentence. Empty if none."),
+  // NOT .max(200): string length constraints are not supported by
+  // structured outputs. The SDK strips them from the schema sent to the
+  // model, then validates client-side — so a longer answer THROWS.
+  reason: z.string().describe("One sentence. Empty if none."),
 });
 
 export interface Judgement {
   claimsFalseCapability: boolean;
   quote: string;
   reason: string;
+  /**
+   * The judge could not produce a usable answer.
+   *
+   * This is NOT the same as "no problem found", and conflating the two is
+   * how a detector quietly reports all-clear. A gate that cannot decide
+   * should deny; a DETECTOR that cannot decide must say so.
+   */
+  unavailable?: boolean;
 }
 
 /** What this agent can actually do. The judge is grounded against this. */
@@ -52,10 +63,24 @@ export const REAL_CAPABILITIES = [
   "hand the conversation to a human colleague",
 ];
 
+const NO_FINDING: Judgement = { claimsFalseCapability: false, quote: "", reason: "" };
+
 export async function judgeCapabilityClaims(agentText: string): Promise<Judgement> {
+  try {
+    return await judge(agentText);
+  } catch (err) {
+    // A REPORTED metric must never take down the run it is reporting on.
+    // If the judge breaks, the eval still tells you whether the agent
+    // works — it just tells you nothing about quality that time.
+    console.warn(`  ⚠ judge unavailable: ${(err as Error).message.slice(0, 80)}`);
+    return { ...NO_FINDING, unavailable: true };
+  }
+}
+
+async function judge(agentText: string): Promise<Judgement> {
   const response = await client.messages.parse({
     model: MODEL,
-    max_tokens: 512,
+    max_tokens: 1024,
     system:
       "You check one thing: did this support agent claim a capability or " +
       "product feature it does not have?\n\n" +
@@ -82,12 +107,13 @@ export async function judgeCapabilityClaims(agentText: string): Promise<Judgemen
   // Fail closed the SAFE way: an unreadable answer is not evidence of a
   // problem. A judge that reports failures it cannot substantiate is worse
   // than no judge.
-  if (!v) return { claimsFalseCapability: false, quote: "", reason: "" };
+  if (!v) {
+    console.warn("  ⚠ judge returned nothing parseable — NOT the same as 'no problem'");
+    return { ...NO_FINDING, unavailable: true };
+  }
 
   // A claim without a citation is not a finding.
-  if (v.claimsFalseCapability && v.quote.trim() === "") {
-    return { claimsFalseCapability: false, quote: "", reason: "" };
-  }
+  if (v.claimsFalseCapability && v.quote.trim() === "") return NO_FINDING;
 
   return v;
 }

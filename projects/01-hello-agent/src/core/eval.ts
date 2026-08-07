@@ -48,7 +48,7 @@ export interface CaseResult {
   ms: number;
   cost: CostSummary;
   /** Only present when judging is enabled. Reported, never a gate. */
-  quality?: { claimsFalseCapability: boolean; quote: string };
+  quality?: { claimsFalseCapability: boolean; quote: string; unavailable?: boolean };
 }
 
 export async function runCase(
@@ -121,7 +121,15 @@ export async function runCase(
     finalStage: convo.stage,
     ms: Date.now() - started,
     cost: since(costFrom),
-    ...(quality ? { quality: { claimsFalseCapability: quality.claimsFalseCapability, quote: quality.quote } } : {}),
+    ...(quality
+      ? {
+          quality: {
+            claimsFalseCapability: quality.claimsFalseCapability,
+            quote: quality.quote,
+            ...(quality.unavailable ? { unavailable: true } : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -140,6 +148,8 @@ export interface RepeatedResult {
   /** How many runs the judge flagged. Reported, never blocking. */
   flaggedByJudge: number;
   judgeQuote: string;
+  /** Runs where the judge could not answer. Distinct from "clean". */
+  judgeUnavailable: number;
 }
 
 /**
@@ -173,6 +183,7 @@ export async function runRepeated(
     cost: results[0]!.cost,
     flaggedByJudge: results.filter((r) => r.quality?.claimsFalseCapability).length,
     judgeQuote: results.find((r) => r.quality?.claimsFalseCapability)?.quality?.quote ?? "",
+    judgeUnavailable: results.filter((r) => r.quality?.unavailable).length,
   };
 }
 
@@ -190,6 +201,9 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
     if (!clean) {
       console.log(`     worst run called: ${r.worst.called.join(" → ") || "(none)"}`);
       for (const f of r.worst.failures) console.log(`     ↳ ${f}`);
+    }
+    if (r.judgeUnavailable > 0) {
+      console.log(`     ? judge could not answer on ${r.judgeUnavailable}/${r.runs} run(s) — quality UNKNOWN, not clean`);
     }
     if (r.flaggedByJudge > 0) {
       console.log(`     ⚑ capability claim (${r.flaggedByJudge}/${r.runs}): "${r.judgeQuote.slice(0, 60)}"`);
@@ -228,7 +242,7 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
   if (judged.length) {
     console.log(
       `\n⚑ ${judged.length} case(s) flagged by the judge for capability claims.` +
-        `\n  Reported, not blocking — the judge agrees with a human 92% of the time.`,
+        `\n  Reported, not blocking — the judge agrees with a human 12/12 across 3 calibration runs.`,
     );
   }
 

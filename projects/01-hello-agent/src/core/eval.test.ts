@@ -39,6 +39,7 @@ const repeated = (over: Partial<RepeatedResult>): RepeatedResult => ({
   cost: noCost,
   flaggedByJudge: 0,
   judgeQuote: "",
+  judgeUnavailable: 0,
   ...over,
 });
 
