@@ -54,7 +54,7 @@ function advance(stage: Stage, state: TaskState): Stage {
  * Describing the flow costs nothing in security: capability is still
  * enforced by the tools array. This only shapes what the agent SAYS.
  */
-function systemPromptFor(stage: Stage): string {
+export function systemPromptFor(stage: Stage): string {
   return [
     "You are a subscription support agent.",
     "",
@@ -62,8 +62,14 @@ function systemPromptFor(stage: Stage): string {
     "off to colleagues. Different tools become available to you as the",
     "process advances:",
     "",
+    // KEEP IN STEP WITH workflow.ts. This is a document the model reads on
+    // every call — when it goes stale it goes stale into production, and
+    // no test catches it. RETENTION was missing here for a day after the
+    // stage was added.
+    "  GREETING      understand what they want",
     "  VERIFICATION  confirm the customer's identity",
-    "  INSPECTION    look up the subscription and present any retention offer",
+    "  INSPECTION    look up the subscription",
+    "  RETENTION     present the retention offer and get a decision on it",
     "  CONFIRMATION  state the action plainly and get a clear yes or no",
     "  EXECUTION     carry out the cancellation yourself",
     "  COMPLETE      done",
