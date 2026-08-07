@@ -16,6 +16,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
+import { recordCall } from "./cost.js";
 
 const client = new Anthropic();
 const MODEL = "claude-haiku-4-5"; // small, cheap, one narrow question
@@ -56,6 +57,7 @@ export async function checkConfirmation(
     output_config: { format: zodOutputFormat(Verdict) },
   });
 
+  recordCall(MODEL, "guard", "confirmation", response.usage);
   const v = response.parsed_output;
   // Fail closed. If we couldn't get a clear answer, it isn't consent.
   if (!v) return { affirms: false, quote: "" };
@@ -104,6 +106,7 @@ export async function checkEscalationRequest(
     messages: [{ role: "user", content: userTurn }],
     output_config: { format: zodOutputFormat(EscalationVerdict) },
   });
+  recordCall(MODEL, "guard", "escalation", response.usage);
   const v = response.parsed_output;
   if (!v) return { wantsHuman: false, tone: "neutral", quote: "" };
   return { wantsHuman: v.wantsHuman, tone: v.tone, quote: v.quote };

@@ -6,6 +6,7 @@
 // Deliberately asserts nothing about wording. The agent may phrase a
 // refusal however it likes; the test still means something.
 
+import { mark, since, type CostSummary } from "./cost.js";
 import { auditLog } from "./executor.js";
 import { Conversation, freshWorld } from "./conversation.js";
 import type { Policy } from "./policy.js";
@@ -44,11 +45,13 @@ export interface CaseResult {
   denied: { tool: string; ruleId?: string }[];
   finalStage: Stage;
   ms: number;
+  cost: CostSummary;
 }
 
 export async function runCase(c: EvalCase, policy: Policy): Promise<CaseResult> {
   const started = Date.now();
   const auditFrom = auditLog.length; // isolate this case's calls
+  const costFrom = mark();
 
   // Fresh world every case. Shared mutable fixtures make results
   // order-dependent — found that the hard way on day 5.
@@ -104,6 +107,7 @@ export async function runCase(c: EvalCase, policy: Policy): Promise<CaseResult> 
     denied,
     finalStage: convo.stage,
     ms: Date.now() - started,
+    cost: since(costFrom),
   };
 }
 
@@ -117,6 +121,8 @@ export interface RepeatedResult {
   /** Passed some runs and failed others. A finding in its own right. */
   flaky: boolean;
   avgMs: number;
+  /** Cost of ONE run — the per-conversation figure, not the total. */
+  cost: CostSummary;
 }
 
 /**
@@ -146,6 +152,7 @@ export async function runRepeated(
     worst: failures[0] ?? results[0]!, // a failure if there was one
     flaky: passed > 0 && passed < runs,
     avgMs: results.reduce((a, r) => a + r.ms, 0) / runs,
+    cost: results[0]!.cost,
   };
 }
 
@@ -156,7 +163,9 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
     const mark = clean ? "✔" : r.severity === "critical" ? "✖ CRITICAL" : "✖";
     const flag = r.flaky ? "  ⚠ FLAKY" : "";
     console.log(
-      `${mark}  ${r.id.padEnd(46)} ${r.passed}/${r.runs}${flag}  (${(r.avgMs / 1000).toFixed(1)}s avg)`,
+      `${mark}  ${r.id.padEnd(44)} ${r.passed}/${r.runs}${flag}  ` +
+        `${(r.avgMs / 1000).toFixed(1)}s  ` +
+        `$${r.cost.usd.toFixed(4)} (${r.cost.calls} calls)`,
     );
     if (!clean) {
       console.log(`     worst run called: ${r.worst.called.join(" → ") || "(none)"}`);
@@ -173,6 +182,22 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
 
   console.log(`${"═".repeat(70)}`);
   console.log(`${fullyPassing}/${results.length} passed every run, in ${seconds.toFixed(0)}s`);
+
+  // ── cost ────────────────────────────────────────────────────────
+  const agentUsd = results.reduce((a, r) => a + r.cost.byPurpose.agent.usd, 0);
+  const guardUsd = results.reduce((a, r) => a + r.cost.byPurpose.guard.usd, 0);
+  const totalUsd = agentUsd + guardUsd;
+  const avg = totalUsd / results.length;
+  const guardShare = totalUsd > 0 ? (guardUsd / totalUsd) * 100 : 0;
+
+  console.log(
+    `\ncost per conversation: $${avg.toFixed(4)} average  ` +
+      `(agent $${(agentUsd / results.length).toFixed(4)}, ` +
+      `guards $${(guardUsd / results.length).toFixed(4)} — ${guardShare.toFixed(0)}%)`,
+  );
+  console.log(
+    `at 100,000 conversations/day: $${(avg * 100_000).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day`,
+  );
   if (flaky.length) {
     console.log(`${flaky.length} flaky — passed sometimes. Investigate; do not re-run until green.`);
   }

@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { reportRepeated, type CaseResult, type RepeatedResult } from "./eval.js";
+import type { CostSummary } from "./cost.js";
+
+const noCost: CostSummary = {
+  calls: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  usd: 0,
+  byPurpose: { agent: { calls: 0, usd: 0 }, guard: { calls: 0, usd: 0 } },
+};
 
 // Synthetic results. No model, no API key — this tests the REPORTING,
 // which had never executed its failure branches because nothing was
@@ -16,6 +25,7 @@ const result = (pass: boolean, failures: string[] = []): CaseResult => ({
   denied: [],
   finalStage: "VERIFICATION",
   ms: 1000,
+  cost: noCost,
 });
 
 const repeated = (over: Partial<RepeatedResult>): RepeatedResult => ({
@@ -26,6 +36,7 @@ const repeated = (over: Partial<RepeatedResult>): RepeatedResult => ({
   worst: result(true),
   flaky: false,
   avgMs: 1000,
+  cost: noCost,
   ...over,
 });
 

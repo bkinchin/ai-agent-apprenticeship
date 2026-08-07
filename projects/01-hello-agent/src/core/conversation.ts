@@ -4,6 +4,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { checkConfirmation, checkEscalationRequest } from "./confirmation.js";
+import { recordCall } from "./cost.js";
 import { scanInput, type Flag } from "./guards.js";
 import { runTool, TOOL_SPECS, type ToolContext, type World } from "./executor.js";
 import type { Policy } from "./policy.js";
@@ -228,6 +229,7 @@ export class Conversation {
         tools: toolsFor(this.stage),
         messages: this.messages,
       });
+      recordCall(MODEL, "agent", `turn@${this.stage}`, response.usage);
       this.messages.push({ role: "assistant", content: response.content });
 
       const uses = response.content.filter(
