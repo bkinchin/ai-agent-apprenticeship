@@ -33,9 +33,15 @@ const Verdict = z.object({
   quote: z
     .string()
     .describe("The exact words that made the claim. Empty string if none."),
-  // NOT .max(200): string length constraints are not supported by
-  // structured outputs. The SDK strips them from the schema sent to the
-  // model, then validates client-side — so a longer answer THROWS.
+  // No .max() here. String length constraints are not supported by
+  // structured outputs — the SDK strips them from the schema sent to the
+  // model and validates client-side, which can throw on a longer answer.
+  //
+  // NOTE: I originally claimed this had caused a specific missed
+  // detection. Tested directly afterwards: with the constraint present,
+  // parsed_output was NOT null and the case WAS caught. The constraint is
+  // still worth avoiding, but it did not cause that failure — a single
+  // 11/12 run did, and I read noise as signal.
   reason: z.string().describe("One sentence. Empty if none."),
 });
 
@@ -49,6 +55,8 @@ export interface Judgement {
    * This is NOT the same as "no problem found", and conflating the two is
    * how a detector quietly reports all-clear. A gate that cannot decide
    * should deny; a DETECTOR that cannot decide must say so.
+   *
+   * Added as a hazard to close, not in response to an observed failure.
    */
   unavailable?: boolean;
 }
