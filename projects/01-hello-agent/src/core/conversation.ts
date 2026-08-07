@@ -3,7 +3,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { checkConfirmation } from "./confirmation.js";
+import { checkConfirmation, checkEscalationRequest } from "./confirmation.js";
 import { runTool, TOOL_SPECS, type ToolContext, type World } from "./executor.js";
 import type { Policy } from "./policy.js";
 import { canTransition, nextStages, restart, STAGE_TOOLS, type Stage, type TaskState } from "./workflow.js";
@@ -109,12 +109,28 @@ export class Conversation {
   async send(turn: string): Promise<TurnResult> {
     const events: string[] = [];
 
-    // Escape hatch 1 — a request for a human. Immediate, from any stage,
-    // without calling the model at all.
-    if (/\b(human|real person|speak to someone|manager)\b/i.test(turn)) {
-      this.stage = "ESCALATED";
-      events.push("[code] → ESCALATED (customer asked for a human)");
-      return { stage: this.stage, text: "Of course — passing you to a colleague now.", events };
+    // Escape hatch 1 — a request for a human.
+    //
+    // Detected by a classifier, not a regex. The regex scored 6/16 on
+    // realistic phrasings: it missed "put me through to someone" and
+    // "get me your supervisor", and fired on "are you a human?".
+    //
+    // Still honoured IMMEDIATELY. The main model is never consulted, so it
+    // cannot offer to help first — which it does, politely, whenever the
+    // decision is left to it. Someone who asks for a person should not
+    // have to ask twice.
+    if (this.stage !== "ESCALATED") {
+      const esc = await checkEscalationRequest(turn);
+      if (esc.wantsHuman) {
+        this.stage = "ESCALATED";
+        this.ctx.state.escalated = { reason: "customer_request", summary: turn };
+        events.push(`[code] → ESCALATED (customer asked for a human) — "${esc.quote}"`);
+        return {
+          stage: this.stage,
+          text: "Of course — passing you to a colleague now.",
+          events,
+        };
+      }
     }
 
     // Escape hatch 2 — wrong account. Go back, discard the evidence.
