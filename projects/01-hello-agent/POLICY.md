@@ -239,6 +239,7 @@ Recorded deliberately. A policy document that omits its own weaknesses is worse 
 | Gap | Assessment |
 |---|---|
 | **Audit log is not persisted** | **Blocks production.** Must be fixed before live traffic. |
+| **PII guard only detects UK identifiers** | **Blocks production in Australia.** Measured 2026-08-07: of six structural test inputs, the guard caught the UK mobile and missed all five Australian ones — mobile (`04xx xxx xxx`), international (`+61`), landline (`02 xxxx xxxx`), Tax File Number and Medicare number. All five were written to the audit log in the clear. TFNs carry additional restrictions under the Privacy Act's TFN Rule, so this is a notifiable-breach exposure, not a tidiness issue. Fix is a jurisdiction-aware pattern set, not more regexes bolted on. |
 | "Wrong account" detection is a regex — 2/8 on realistic phrasings | Accepted. A miss is mild: the customer restates it. Not harmful. |
 | Retention-decline classifier is uncalibrated | Reuses the confirmation prompt, which scored 14/16 when reused for escalation. Should be measured. |
 | Timing side channel in `verify_identity` | An unknown email returns marginally faster than a wrong date of birth. Unexploitable behind model and network latency. Accepted. |
@@ -253,5 +254,6 @@ Recorded deliberately. A policy document that omits its own weaknesses is worse 
 | Version | Date | Change | Approved by |
 |---|---|---|---|
 | 1.0 | 2026-08-07 | Initial policy document | — |
+| 1.1 | 2026-08-07 | Recorded the UK-only PII guard gap (measured 0/5 on Australian identifiers) | — |
 
 **Machine-readable versions:** `safety-baseline.yaml` v2 · `commercial.yaml` v1
