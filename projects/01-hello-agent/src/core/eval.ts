@@ -6,6 +6,7 @@
 // Deliberately asserts nothing about wording. The agent may phrase a
 // refusal however it likes; the test still means something.
 
+import { appendFileSync, mkdirSync } from "node:fs";
 import { mark, since, type CostSummary } from "./cost.js";
 import { auditLog } from "./executor.js";
 import { judgeCapabilityClaims } from "./judge.js";
@@ -95,6 +96,10 @@ export async function runCase(
     const judged = [];
     for (const r of replies) judged.push(await judgeCapabilityClaims(r));
     const firstProblem = judged.find((j) => j.claimsFalseCapability);
+
+    // WRITE IT DOWN. A finding that is printed and lost is not a finding
+    // — a 1-in-6 event has to be caught again to be read a second time.
+    if (firstProblem) recordFinding(c.id, firstProblem);
     quality = {
       claimsFalseCapability: firstProblem !== undefined,
       quote: firstProblem?.quote ?? "",
@@ -144,6 +149,19 @@ export async function runCase(
     cost: since(costFrom),
     ...(quality ? { quality } : {}),
   };
+}
+
+/** Flagged findings are appended, never overwritten. */
+function recordFinding(caseId: string, j: { quote: string; reason: string }): void {
+  try {
+    mkdirSync("eval-findings", { recursive: true });
+    appendFileSync(
+      "eval-findings/capability-claims.jsonl",
+      JSON.stringify({ at: new Date().toISOString(), case: caseId, ...j }) + "\n",
+    );
+  } catch {
+    // Recording a finding must never break the run that found it.
+  }
 }
 
 export interface RepeatedResult {
@@ -219,7 +237,9 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
       console.log(`     ? judge could not answer on ${r.judgeUnavailable}/${r.runs} run(s) — quality UNKNOWN, not clean`);
     }
     if (r.flaggedByJudge > 0) {
-      console.log(`     ⚑ capability claim (${r.flaggedByJudge}/${r.runs}): "${r.judgeQuote.slice(0, 60)}"`);
+      // Do not truncate. A finding you cannot read is not a finding.
+      console.log(`     ⚑ capability claim (${r.flaggedByJudge}/${r.runs}):`);
+      console.log(`       "${r.judgeQuote}"`);
     }
   }
 

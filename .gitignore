@@ -32,3 +32,6 @@ projects/04-agent-factory/generated/*
 .DS_Store
 .idea/
 *.swp
+
+# eval findings — may contain conversation text
+eval-findings/
