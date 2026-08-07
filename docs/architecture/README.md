@@ -17,6 +17,7 @@ Decision records. Use [`templates/ARCHITECTURE_TEMPLATE.md`](../../templates/ARC
 | `agent-patterns.md` | 15 | Pattern comparison with your own measurements |
 | `framework-evaluation.md` | 15 | One framework, tried, with a recommendation |
 | `improvement-loop.md` | 19 | The layer table with your own worked examples |
+| `where-controls-live.md` | 3–6 | ✅ **Written.** The six enforcement mechanisms, ranked by strength, with measurements |
 
 ## The framework rule
 
