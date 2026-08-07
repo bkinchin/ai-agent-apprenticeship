@@ -14,6 +14,17 @@
 //      against reality rather than against its own expectations.
 //   5. Calibrated against human labels before anyone trusts it, and
 //      never used as a gate.
+//
+// COST: $0.00087 per judgement (Haiku, ~600 tokens in / 50 out) against
+// $0.039 for the conversation being judged. About 2% — calibration of the
+// full 12-case set costs a penny, so there is no excuse for an
+// uncalibrated judge.
+//
+// KNOWN LIMITATION: eval currently judges only the FINAL message of a
+// conversation. The failure that motivated this judge — "I'll pass you to
+// the team that can process the cancellation" — happened mid-conversation
+// at CONFIRMATION, and would be missed. Judging every turn would cost
+// roughly 4x, which is still trivial next to the agent's own spend.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";

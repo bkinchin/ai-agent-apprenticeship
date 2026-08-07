@@ -6,6 +6,7 @@
 // Run: npx tsx --env-file=../../.env.local src/learn/judge-calibration.ts
 
 import { judgeCapabilityClaims } from "../core/judge.js";
+import { mark, since } from "../core/cost.js";
 
 const CASES: [label: string, text: string, isFalseClaim: boolean][] = [
   // ── real failures caught by hand this week ──────────────────────
@@ -73,6 +74,7 @@ const CASES: [label: string, text: string, isFalseClaim: boolean][] = [
   ],
 ];
 
+const costFrom = mark();
 let agree = 0;
 console.log("\n  human  │ judge  │ case                          │ quote");
 console.log("  ───────┼────────┼───────────────────────────────┼──────────────────────");
@@ -89,4 +91,11 @@ for (const [label, text, expected] of CASES) {
 
 const pct = Math.round((agree / CASES.length) * 100);
 console.log(`\n  agreement: ${agree}/${CASES.length} (${pct}%)`);
-console.log(pct >= 80 ? "  usable — trend it, never gate on it\n" : "  BELOW 80% — the rubric is broken, not the agent\n");
+console.log(pct >= 80 ? "  usable — trend it, never gate on it" : "  BELOW 80% — the rubric is broken, not the agent");
+
+const c = since(costFrom);
+console.log(
+  `\n  cost: $${c.usd.toFixed(5)} for ${c.calls} judgements ` +
+    `= $${(c.usd / c.calls).toFixed(5)} each` +
+    `\n        ${c.inputTokens} in / ${c.outputTokens} out (claude-haiku-4-5)\n`,
+);
