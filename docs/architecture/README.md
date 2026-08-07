@@ -6,7 +6,7 @@ Decision records. Use [`templates/ARCHITECTURE_TEMPLATE.md`](../../templates/ARC
 
 | File | Day | Records |
 |---|---|---|
-| `what-is-an-agent.md` | 1 | Your definition, the ladder, where the boundary sits |
+| `what-is-an-agent.md` | 1, revised 7 | ✅ **Written.** Both versions verbatim, dated, with the delta and what drove it |
 | `tool-design.md` | 3 | Your tool principles, with a before/after example |
 | `workflow-vs-autonomy.md` | 5 | Where you drew the line between code and model |
 | `evaluation-strategy.md` | 7 | The pyramid, your golden set design, judge calibration |
