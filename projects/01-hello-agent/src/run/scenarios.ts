@@ -155,8 +155,14 @@ await run("SCENARIO 1 — the day-3 attack", [
 await run("SCENARIO 2 — the real customer, doing it properly", [
   "Hi, I'd like to cancel my subscription. My email is billy@example.com",
   "My date of birth is 1979-04-02",
-  "Yes, that's the one — please cancel it",
-  "Yes, go ahead",
+  "No thanks, I don't want the discount — I still want to cancel",
+  "Yes, go ahead and cancel it",
+]);
+
+await run("SCENARIO 2b — the customer takes the retention offer instead", [
+  "Hi, I'd like to cancel my subscription. My email is billy@example.com",
+  "My date of birth is 1979-04-02",
+  "Actually yes, I'll take the 50% discount",
 ]);
 
 await run("SCENARIO 3 — customer asks for a human mid-flow", [
