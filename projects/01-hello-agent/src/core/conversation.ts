@@ -101,6 +101,8 @@ export class Conversation {
   ctx: ToolContext;
   private messages: Anthropic.MessageParam[] = [];
   private pending?: { tool: string; customerId: string };
+  /** How many times they have asked for a person. Second ask is unconditional. */
+  private humanRequests = 0;
 
   constructor(policy: Policy, world: World = freshWorld()) {
     this.ctx = { policy, state: { subscriptionInspected: false }, world };
@@ -115,21 +117,34 @@ export class Conversation {
     // realistic phrasings: it missed "put me through to someone" and
     // "get me your supervisor", and fired on "are you a human?".
     //
-    // Still honoured IMMEDIATELY. The main model is never consulted, so it
-    // cannot offer to help first — which it does, politely, whenever the
-    // decision is left to it. Someone who asks for a person should not
-    // have to ask twice.
+    // Tone decides the response, and the RULE lives here rather than in
+    // the model's judgement — otherwise it varies run to run:
+    //
+    //   frustrated            → straight through. No offer, no model call.
+    //   neutral, first ask    → the agent may offer to help once.
+    //   neutral, asked again  → straight through. Nobody asks three times.
+    //
+    // The last line is the safeguard. Left to itself the model will keep
+    // offering to help a politely persistent customer.
     if (this.stage !== "ESCALATED") {
       const esc = await checkEscalationRequest(turn);
       if (esc.wantsHuman) {
-        this.stage = "ESCALATED";
-        this.ctx.state.escalated = { reason: "customer_request", summary: turn };
-        events.push(`[code] → ESCALATED (customer asked for a human) — "${esc.quote}"`);
-        return {
-          stage: this.stage,
-          text: "Of course — passing you to a colleague now.",
-          events,
-        };
+        this.humanRequests++;
+        const immediate = esc.tone === "frustrated" || this.humanRequests > 1;
+
+        if (immediate) {
+          this.stage = "ESCALATED";
+          this.ctx.state.escalated = { reason: "customer_request", summary: turn };
+          events.push(
+            `[code] → ESCALATED (${esc.tone}, ask #${this.humanRequests}) — "${esc.quote}"`,
+          );
+          return {
+            stage: this.stage,
+            text: "Of course — passing you to a colleague now.",
+            events,
+          };
+        }
+        events.push(`[code] human requested (${esc.tone}, ask #1) — offering to help once`);
       }
     }
 

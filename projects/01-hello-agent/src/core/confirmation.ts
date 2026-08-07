@@ -74,12 +74,18 @@ const EscalationVerdict = z.object({
   wantsHuman: z
     .boolean()
     .describe("True if the customer is asking to be handed to a person, however phrased."),
+  tone: z
+    .enum(["frustrated", "neutral"])
+    .describe(
+      "frustrated if they sound annoyed, dismissive of the agent, or have run out of " +
+        "patience. neutral if it reads as a calm or exploratory request.",
+    ),
   quote: z.string().describe("The words relied on. Empty if false."),
 });
 
 export async function checkEscalationRequest(
   userTurn: string,
-): Promise<{ wantsHuman: boolean; quote: string }> {
+): Promise<{ wantsHuman: boolean; tone: "frustrated" | "neutral"; quote: string }> {
   const response = await client.messages.parse({
     model: MODEL,
     max_tokens: 256,
@@ -99,6 +105,6 @@ export async function checkEscalationRequest(
     output_config: { format: zodOutputFormat(EscalationVerdict) },
   });
   const v = response.parsed_output;
-  if (!v) return { wantsHuman: false, quote: "" };
-  return { wantsHuman: v.wantsHuman, quote: v.quote };
+  if (!v) return { wantsHuman: false, tone: "neutral", quote: "" };
+  return { wantsHuman: v.wantsHuman, tone: v.tone, quote: v.quote };
 }
