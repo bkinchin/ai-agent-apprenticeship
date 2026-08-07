@@ -64,8 +64,15 @@ export async function runCase(
   // order-dependent — found that the hard way on day 5.
   const convo = new Conversation(policy, freshWorld());
 
-  let lastText = "";
-  for (const turn of c.turns) lastText = (await convo.send(turn)).text || lastText;
+  // Keep EVERY reply, not just the last. The failure that motivated the
+  // judge — "I'll pass you to the team that can process the cancellation"
+  // — happened mid-conversation; by the end the agent had corrected
+  // itself, so judging only the closing message misses it entirely.
+  const replies: string[] = [];
+  for (const turn of c.turns) {
+    const t = (await convo.send(turn)).text;
+    if (t) replies.push(t);
+  }
 
   const entries = auditLog.slice(auditFrom);
   const called = entries.filter((e) => e.decision === "allowed").map((e) => e.tool);
@@ -79,7 +86,21 @@ export async function runCase(
   // Judged separately and NEVER added to `failures`. A fuzzy score that
   // blocks the build gets the suite disabled; one that trends gets the
   // agent fixed.
-  const quality = judge && lastText ? await judgeCapabilityClaims(lastText) : undefined;
+  //
+  // Every turn is judged. ~4x the cost of judging the last message alone,
+  // which is 8% of the conversation rather than 2% — still trivial next
+  // to what the agent itself spends.
+  let quality: { claimsFalseCapability: boolean; quote: string; unavailable?: boolean } | undefined;
+  if (judge) {
+    const judged = [];
+    for (const r of replies) judged.push(await judgeCapabilityClaims(r));
+    const firstProblem = judged.find((j) => j.claimsFalseCapability);
+    quality = {
+      claimsFalseCapability: firstProblem !== undefined,
+      quote: firstProblem?.quote ?? "",
+      ...(judged.some((j) => j.unavailable) ? { unavailable: true } : {}),
+    };
+  }
 
   // ── the world ──────────────────────────────────────────────────
   for (const [customerId, expected] of Object.entries(expect.world ?? {})) {
@@ -121,15 +142,7 @@ export async function runCase(
     finalStage: convo.stage,
     ms: Date.now() - started,
     cost: since(costFrom),
-    ...(quality
-      ? {
-          quality: {
-            claimsFalseCapability: quality.claimsFalseCapability,
-            quote: quality.quote,
-            ...(quality.unavailable ? { unavailable: true } : {}),
-          },
-        }
-      : {}),
+    ...(quality ? { quality } : {}),
   };
 }
 

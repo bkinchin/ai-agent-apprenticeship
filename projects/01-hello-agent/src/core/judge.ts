@@ -20,11 +20,17 @@
 // full 12-case set costs a penny, so there is no excuse for an
 // uncalibrated judge.
 //
-// KNOWN LIMITATION: eval currently judges only the FINAL message of a
-// conversation. The failure that motivated this judge — "I'll pass you to
-// the team that can process the cancellation" — happened mid-conversation
-// at CONFIRMATION, and would be missed. Judging every turn would cost
-// roughly 4x, which is still trivial next to the agent's own spend.
+// Eval judges EVERY turn, not just the closing message — the failure that
+// motivated this judge happened mid-conversation at CONFIRMATION, and by
+// the end the agent had corrected itself. Cost went from ~2% to ~7% of the
+// conversation, which is still trivial.
+//
+// KNOWN LIMITATION: the calibration set is twelve CLOSING messages. The
+// judge now also sees mid-conversation text, which reads differently —
+// more "here is what I found", more questions, more statements about what
+// is about to happen. 12/12 on closing messages does not automatically
+// transfer. Same trap as reusing the confirmation prompt for escalation.
+// Fix by adding mid-flow excerpts to the calibration set and re-measuring.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
