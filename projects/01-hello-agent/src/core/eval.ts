@@ -107,6 +107,83 @@ export async function runCase(c: EvalCase, policy: Policy): Promise<CaseResult> 
   };
 }
 
+export interface RepeatedResult {
+  id: string;
+  severity: "critical" | "quality";
+  runs: number;
+  passed: number;
+  /** The WORST run. Never an average — averaging hides the failure. */
+  worst: CaseResult;
+  /** Passed some runs and failed others. A finding in its own right. */
+  flaky: boolean;
+  avgMs: number;
+}
+
+/**
+ * Run a case N times.
+ *
+ * Non-determinism is the material, not a defect to be tuned away. A case
+ * that passes 2/3 has told you something a single run cannot: that its
+ * outcome depends on phrasing the model happened to choose. That is worth
+ * knowing BEFORE a customer finds it.
+ */
+export async function runRepeated(
+  c: EvalCase,
+  policy: Policy,
+  runs: number,
+): Promise<RepeatedResult> {
+  const results: CaseResult[] = [];
+  for (let i = 0; i < runs; i++) results.push(await runCase(c, policy));
+
+  const passed = results.filter((r) => r.pass).length;
+  const failures = results.filter((r) => !r.pass);
+
+  return {
+    id: c.id,
+    severity: c.severity ?? "quality",
+    runs,
+    passed,
+    worst: failures[0] ?? results[0]!, // a failure if there was one
+    flaky: passed > 0 && passed < runs,
+    avgMs: results.reduce((a, r) => a + r.ms, 0) / runs,
+  };
+}
+
+export function reportRepeated(results: RepeatedResult[]): boolean {
+  console.log(`\n${"═".repeat(70)}`);
+  for (const r of results) {
+    const clean = r.passed === r.runs;
+    const mark = clean ? "✔" : r.severity === "critical" ? "✖ CRITICAL" : "✖";
+    const flag = r.flaky ? "  ⚠ FLAKY" : "";
+    console.log(
+      `${mark}  ${r.id.padEnd(46)} ${r.passed}/${r.runs}${flag}  (${(r.avgMs / 1000).toFixed(1)}s avg)`,
+    );
+    if (!clean) {
+      console.log(`     worst run called: ${r.worst.called.join(" → ") || "(none)"}`);
+      for (const f of r.worst.failures) console.log(`     ↳ ${f}`);
+    }
+  }
+
+  const fullyPassing = results.filter((r) => r.passed === r.runs).length;
+  const flaky = results.filter((r) => r.flaky);
+  const criticalFails = results.filter(
+    (r) => r.passed < r.runs && r.severity === "critical",
+  );
+  const seconds = results.reduce((a, r) => a + r.avgMs * r.runs, 0) / 1000;
+
+  console.log(`${"═".repeat(70)}`);
+  console.log(`${fullyPassing}/${results.length} passed every run, in ${seconds.toFixed(0)}s`);
+  if (flaky.length) {
+    console.log(`${flaky.length} flaky — passed sometimes. Investigate; do not re-run until green.`);
+  }
+  if (criticalFails.length) {
+    console.log(`\n${criticalFails.length} CRITICAL failure(s) — this must not ship.`);
+  }
+  console.log("");
+
+  return criticalFails.length === 0;
+}
+
 export function report(results: CaseResult[]): boolean {
   const pass = results.filter((r) => r.pass).length;
   const criticalFails = results.filter((r) => !r.pass && r.severity === "critical");

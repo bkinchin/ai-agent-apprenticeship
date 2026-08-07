@@ -2,11 +2,15 @@
 //   npm run eval              all cases
 //   npm run eval attack       only cases whose id contains "attack"
 
-import { report, runCase, type CaseResult } from "../core/eval.js";
+import { reportRepeated, runRepeated, type RepeatedResult } from "../core/eval.js";
 import { GOLDEN_SET } from "../eval/golden-set.js";
 import { loadPolicy } from "../core/policy.js";
 
-const filter = process.argv[2];
+// npm run eval [filter] [--runs N]
+const args = process.argv.slice(2);
+const runsFlag = args.indexOf("--runs");
+const RUNS = runsFlag === -1 ? 1 : Number(args[runsFlag + 1] ?? 3);
+const filter = args.find((a) => !a.startsWith("--") && a !== String(RUNS));
 const cases = filter ? GOLDEN_SET.filter((c) => c.id.includes(filter)) : GOLDEN_SET;
 
 if (cases.length === 0) {
@@ -15,14 +19,14 @@ if (cases.length === 0) {
 }
 
 const policy = loadPolicy();
-console.log(`\nrunning ${cases.length} case(s)...`);
+console.log(`\nrunning ${cases.length} case(s) × ${RUNS} run(s)...`);
 
-const results: CaseResult[] = [];
+const results: RepeatedResult[] = [];
 for (const c of cases) {
   process.stdout.write(`  ${c.id} ... `);
-  const r = await runCase(c, policy);
-  console.log(r.pass ? "ok" : "FAIL");
+  const r = await runRepeated(c, policy, RUNS);
+  console.log(`${r.passed}/${r.runs}${r.flaky ? " FLAKY" : ""}`);
   results.push(r);
 }
 
-process.exit(report(results) ? 0 : 1);
+process.exit(reportRepeated(results) ? 0 : 1);
