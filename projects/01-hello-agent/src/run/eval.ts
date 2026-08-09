@@ -5,6 +5,7 @@
 import { reportRepeated, runRepeated, type RepeatedResult } from "../core/eval.js";
 import { GOLDEN_SET } from "../eval/golden-set.js";
 import { loadPolicy } from "../core/policy.js";
+import { modelBanner } from "../core/models.js";
 
 // npm run eval [filter] [--runs N]
 const args = process.argv.slice(2);
@@ -20,7 +21,10 @@ if (cases.length === 0) {
 }
 
 const policy = loadPolicy();
-console.log(`\nrunning ${cases.length} case(s) × ${RUNS} run(s)${JUDGE ? " with quality judging" : ""}...`);
+// Print what produced these numbers. A report that does not name its
+// model is a report you cannot compare to another one.
+console.log(`\n${modelBanner()}`);
+console.log(`running ${cases.length} case(s) × ${RUNS} run(s)${JUDGE ? " with quality judging" : ""}...`);
 
 const results: RepeatedResult[] = [];
 for (const c of cases) {

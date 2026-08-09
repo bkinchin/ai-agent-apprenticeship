@@ -8,10 +8,11 @@ import { recordCall } from "./cost.js";
 import { scanInput, type Flag } from "./guards.js";
 import { runTool, TOOL_SPECS, type ToolContext, type World } from "./executor.js";
 import type { Policy } from "./policy.js";
+import { AGENT_MODEL } from "./models.js";
 import { canTransition, nextStages, restart, STAGE_TOOLS, type Stage, type TaskState } from "./workflow.js";
 
 const client = new Anthropic();
-const MODEL = "claude-opus-5";
+const MODEL = AGENT_MODEL;
 
 export const freshWorld = (): World => ({
   customers: [

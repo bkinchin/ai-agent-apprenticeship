@@ -17,9 +17,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { recordCall } from "./cost.js";
+import { GUARD_MODEL } from "./models.js";
 
 const client = new Anthropic();
-const MODEL = "claude-haiku-4-5"; // small, cheap, one narrow question
+const MODEL = GUARD_MODEL; // small, cheap, one narrow question
 
 const Verdict = z.object({
   affirms: z

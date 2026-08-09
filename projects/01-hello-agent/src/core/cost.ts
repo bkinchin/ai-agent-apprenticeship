@@ -13,7 +13,7 @@
 // and the one most teams cannot produce.
 
 /** USD per million tokens. Keep in step with the provider's pricing page. */
-const PRICING: Record<string, { in: number; out: number }> = {
+export const PRICING: Record<string, { in: number; out: number }> = {
   "claude-opus-5": { in: 5, out: 25 },
   "claude-haiku-4-5": { in: 1, out: 5 },
 };
