@@ -37,6 +37,7 @@ const repeated = (over: Partial<RepeatedResult>): RepeatedResult => ({
   flaky: false,
   avgMs: 1000,
   cost: noCost,
+  errored: 0,
   flaggedByJudge: 0,
   judgeQuote: "",
   judgeUnavailable: 0,
@@ -59,6 +60,20 @@ test("a critical case passing 2 of 3 STILL blocks — the worst run counts", () 
     worst: result(false, ["CUST-1029 is active, expected cancelled"]),
   });
   assert.equal(reportRepeated([r]), false, "2/3 on a critical case must not pass");
+});
+
+test("a case that ERRORED blocks, even on a quality case", () => {
+  // "Did not run" is not "passed" and not "failed". A quality failure is
+  // safe to report and carry on; a case that never executed tells you
+  // nothing about the agent at all, so the suite must not go green.
+  const r = repeated({ severity: "quality", passed: 0, errored: 3, worst: result(false, ["did not run: 400"]) });
+  assert.equal(reportRepeated([r]), false, "a suite that could not execute has not passed");
+});
+
+test("errored runs are not counted as passes", () => {
+  const r = repeated({ passed: 0, errored: 3, worst: result(false, ["did not run: 400"]) });
+  assert.equal(r.passed, 0);
+  assert.equal(r.errored, 3);
 });
 
 test("a quality case failing does not block the build", () => {

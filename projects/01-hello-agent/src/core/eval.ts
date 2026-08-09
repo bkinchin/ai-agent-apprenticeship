@@ -50,6 +50,15 @@ export interface CaseResult {
   cost: CostSummary;
   /** Only present when judging is enabled. Reported, never a gate. */
   quality?: { claimsFalseCapability: boolean; quote: string; unavailable?: boolean };
+  /**
+   * The case THREW and produced no verdict.
+   *
+   * Not a pass and not a fail — it did not run. Same distinction as
+   * `unavailable` on the judge, and it matters for the same reason: a
+   * suite that cannot tell "green" from "never executed" will eventually
+   * report the second as the first.
+   */
+  errored?: string;
 }
 
 export async function runCase(
@@ -181,6 +190,8 @@ export interface RepeatedResult {
   judgeQuote: string;
   /** Runs where the judge could not answer. Distinct from "clean". */
   judgeUnavailable: number;
+  /** Runs that threw and produced no verdict. Not passes, not failures. */
+  errored: number;
 }
 
 /**
@@ -197,8 +208,37 @@ export async function runRepeated(
   runs: number,
   judge = false,
 ): Promise<RepeatedResult> {
+  // ── isolate every run ────────────────────────────────────────
+  //
+  // A guard that throws SHOULD stop a production conversation — failing
+  // closed is the correct behaviour there. But in the harness it used to
+  // take the whole suite with it: one 402 inside checkEscalationRequest
+  // killed case 1 of 7 and the other six never ran, so a transient
+  // billing problem looked identical to a broken agent.
+  //
+  // Contain the blast radius here, and NOWHERE else. The guards keep
+  // throwing; the runner just stops letting one case speak for the rest.
   const results: CaseResult[] = [];
-  for (let i = 0; i < runs; i++) results.push(await runCase(c, policy, judge));
+  for (let i = 0; i < runs; i++) {
+    try {
+      results.push(await runCase(c, policy, judge));
+    } catch (err) {
+      const msg = (err as Error).message.split("\n")[0]!.slice(0, 120);
+      console.log(`  ! ${c.id} errored: ${msg}`);
+      results.push({
+        id: c.id,
+        pass: false, // never counts as a pass ...
+        errored: msg, // ... and is reported apart from real failures
+        severity: c.severity ?? "quality",
+        failures: [`did not run: ${msg}`],
+        called: [],
+        denied: [],
+        finalStage: "GREETING",
+        ms: 0,
+        cost: since(mark()),
+      });
+    }
+  }
 
   const passed = results.filter((r) => r.pass).length;
   const failures = results.filter((r) => !r.pass);
@@ -215,6 +255,7 @@ export async function runRepeated(
     flaggedByJudge: results.filter((r) => r.quality?.claimsFalseCapability).length,
     judgeQuote: results.find((r) => r.quality?.claimsFalseCapability)?.quality?.quote ?? "",
     judgeUnavailable: results.filter((r) => r.quality?.unavailable).length,
+    errored: results.filter((r) => r.errored).length,
   };
 }
 
@@ -232,6 +273,9 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
     if (!clean) {
       console.log(`     worst run called: ${r.worst.called.join(" → ") || "(none)"}`);
       for (const f of r.worst.failures) console.log(`     ↳ ${f}`);
+    }
+    if (r.errored > 0) {
+      console.log(`     ! ${r.errored}/${r.runs} run(s) DID NOT RUN — ${r.worst.errored ?? "unknown error"}`);
     }
     if (r.judgeUnavailable > 0) {
       console.log(`     ? judge could not answer on ${r.judgeUnavailable}/${r.runs} run(s) — quality UNKNOWN, not clean`);
@@ -281,12 +325,22 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
     );
   }
 
+  const errored = results.filter((r) => r.errored > 0);
+  if (errored.length) {
+    console.log(
+      `\n! ${errored.length} case(s) DID NOT RUN. This is not a pass rate — it is a partial one.` +
+        `\n  ${errored.map((r) => r.id).join(", ")}`,
+    );
+  }
+
   if (criticalFails.length) {
     console.log(`\n${criticalFails.length} CRITICAL failure(s) — this must not ship.`);
   }
   console.log("");
 
-  return criticalFails.length === 0;
+  // A suite that could not execute has not passed. Green must mean "ran
+  // and was correct", never "nothing reported a problem".
+  return criticalFails.length === 0 && errored.length === 0;
 }
 
 export function report(results: CaseResult[]): boolean {
