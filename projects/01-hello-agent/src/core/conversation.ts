@@ -8,6 +8,7 @@ import { recordCall } from "./cost.js";
 import { scanInput, type Flag } from "./guards.js";
 import { runTool, TOOL_SPECS, type ToolContext, type World } from "./executor.js";
 import type { Policy } from "./policy.js";
+import { parseDateOfBirth, resolveAmbiguity, describe as describeDate } from "./dates.js";
 import { AGENT_MODEL } from "./models.js";
 import { canTransition, nextStages, restart, STAGE_TOOLS, type Stage, type TaskState } from "./workflow.js";
 
@@ -26,8 +27,14 @@ export const freshWorld = (): World => ({
 });
 
 /** Tool descriptions for the current stage. Presentation only. */
-function toolsFor(stage: Stage): Anthropic.Tool[] {
-  const allowed = STAGE_TOOLS[stage];
+function toolsFor(stage: Stage, state: TaskState): Anthropic.Tool[] {
+  // An unreadable date of birth REMOVES verify_identity. The model
+  // cannot be persuaded past a tool it does not have — which is the
+  // whole reason this is here and not in the prompt. It asked twice,
+  // was pushed a third time, and guessed.
+  const allowed = STAGE_TOOLS[stage].filter(
+    (t) => !(t === "verify_identity" && state.ambiguousDob),
+  );
   return TOOL_SPECS.filter((t) => allowed.includes(t.name)).map((t) => ({
     name: t.name,
     description: t.description,
@@ -55,7 +62,7 @@ function advance(stage: Stage, state: TaskState): Stage {
  * Describing the flow costs nothing in security: capability is still
  * enforced by the tools array. This only shapes what the agent SAYS.
  */
-export function systemPromptFor(stage: Stage): string {
+export function systemPromptFor(stage: Stage, state: TaskState = { subscriptionInspected: false }): string {
   return [
     "You are a subscription support agent.",
     "",
@@ -84,6 +91,17 @@ export function systemPromptFor(stage: Stage): string {
     "",
     "Use only the tools available to you. Never claim to have done something",
     "you have no tool for. It is fine to say you don't know something.",
+    // Capability removal is the control; this is the courtesy of saying
+    // why. Without it the agent sees a stage with a missing tool and
+    // invents an explanation — the same failure that produced the
+    // imaginary colleague on day 5.
+    state.ambiguousDob
+      ? `\nThe date of birth they gave ("${state.ambiguousDob.raw}") could be ` +
+        `${describeDate(state.ambiguousDob.readings[0])} or ` +
+        `${describeDate(state.ambiguousDob.readings[1])}. You CANNOT verify\n` +
+        "anyone until they say which. Ask them plainly, and do not guess or\n" +
+        "try one and see — a date of birth is a security check, not a hint."
+      : "",
     stage === "RETENTION"
       ? "\nPresent the retention offer and ASK whether they want it. Do not ask\n" +
         "about cancelling in the same message — one decision at a time. If they\n" +
@@ -177,6 +195,34 @@ export class Conversation {
       }
     }
 
+    // Read any date in this turn BEFORE the model gets a say. The model
+    // proposes, code disposes — and a verification credential is the
+    // last place that rule should have been left unenforced.
+    const pending = this.ctx.state.ambiguousDob;
+    if (pending) {
+      // They were asked "April or February?". A bare month name is the
+      // natural answer and parses as no date at all, so this has to be
+      // asked as its own narrow question — found by reading a real
+      // transcript, after both eval cases passed over it.
+      const resolved = resolveAmbiguity(turn, pending.readings);
+      if (resolved) {
+        this.ctx.state.ambiguousDob = undefined;
+        events.push(`[code] resolved to ${resolved} — verify_identity restored`);
+      }
+    }
+
+    const dob = parseDateOfBirth(turn);
+    if (dob.kind === "ambiguous") {
+      this.ctx.state.ambiguousDob = { raw: dob.raw, readings: dob.readings };
+      events.push(
+        `[code] "${dob.raw}" is ambiguous (${dob.readings.join(" or ")}) — ` +
+          "verify_identity withheld",
+      );
+    } else if (dob.kind === "iso" && this.ctx.state.ambiguousDob) {
+      this.ctx.state.ambiguousDob = undefined;
+      events.push(`[code] date resolved to ${dob.iso} — verify_identity restored`);
+    }
+
     // Escape hatch 2 — wrong account. Go back, discard the evidence.
     if (/\b(wrong|different|not my) (account|email|address)\b/i.test(turn)) {
       this.ctx.state = restart();
@@ -237,8 +283,8 @@ export class Conversation {
       const response = await client.messages.create({
         model: MODEL,
         max_tokens: 1024,
-        system: systemPromptFor(this.stage),
-        tools: toolsFor(this.stage),
+        system: systemPromptFor(this.stage, this.ctx.state),
+        tools: toolsFor(this.stage, this.ctx.state),
         messages: this.messages,
       });
       recordCall(MODEL, "agent", `turn@${this.stage}`, response.usage);

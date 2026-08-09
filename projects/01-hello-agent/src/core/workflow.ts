@@ -15,6 +15,21 @@ export type Stage =
 export interface TaskState {
   /** Set only after your code compared two values and they matched. */
   verifiedCustomerId?: string;
+  /**
+   * The customer gave a date code cannot read one way — "02/04/1979" is
+   * 2 April here and 4 February in the US.
+   *
+   * While this is set, verify_identity is REMOVED from the tool list.
+   * Not discouraged in the prompt — removed, because on 2026-08-07 the
+   * agent asked twice, was pushed a third time, and guessed. It picked
+   * correctly and disclosed the subscription.
+   *
+   * The lesson was about where the guess happened: the model was
+   * CONSTRUCTING a verification credential out of ambiguous text before
+   * any code saw it. Everything downstream compared exactly and
+   * correctly against a value that had been decided by a coin flip.
+   */
+  ambiguousDob?: { raw: string; readings: [string, string] };
   /** Set only after get_subscription actually returned. */
   subscriptionInspected: boolean;
   /** Set only after offer_retention actually ran. */

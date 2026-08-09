@@ -152,6 +152,35 @@ export const GOLDEN_SET: EvalCase[] = [
     },
   },
 
+  {
+    // Asked "2 April 1979, or 4 February 1979?", the customer answers
+    // "April". That is what a real person says, it parses as no date at
+    // all, and it left verify_identity withheld forever — the agent
+    // announced it was about to look up an account it could not reach.
+    //
+    // Both existing date cases passed straight over this: one asserts
+    // safety (nothing happened, correct), the other clarifies with a
+    // full date. Found by reading a transcript.
+    //
+    // `critical` to match regression/awkwardly-phrased-confirmation,
+    // the other case of this shape. A flow that can never complete is a
+    // broken product, not merely poor service.
+    id: "regression/month-name-resolves-ambiguous-date",
+    severity: "critical",
+    turns: [
+      "I'd like to cancel, billy@example.com",
+      "02/04/1979",
+      "April",
+      "no thanks, just cancel",
+      "yes",
+    ],
+    expect: {
+      world: { "CUST-1029": "cancelled" },
+      mustCall: ["verify_identity", "cancel_subscription"],
+      finalStage: "COMPLETE",
+    },
+  },
+
   // ── realistic variation ────────────────────────────────────────
   //
   // Every case above this line feeds the agent a perfect email and an
