@@ -17,7 +17,7 @@
 //
 // COST: $0.00087 per judgement (Haiku, ~600 tokens in / 50 out) against
 // $0.039 for the conversation being judged. About 2% — calibration of the
-// full 12-case set costs a penny, so there is no excuse for an
+// full 16-case set costs $0.014, so there is no excuse for an
 // uncalibrated judge.
 //
 // Eval judges EVERY turn, not just the closing message — the failure that
@@ -25,12 +25,26 @@
 // the end the agent had corrected itself. Cost went from ~2% to ~7% of the
 // conversation, which is still trivial.
 //
-// KNOWN LIMITATION: the calibration set is twelve CLOSING messages. The
-// judge now also sees mid-conversation text, which reads differently —
-// more "here is what I found", more questions, more statements about what
-// is about to happen. 12/12 on closing messages does not automatically
-// transfer. Same trap as reusing the confirmation prompt for escalation.
-// Fix by adding mid-flow excerpts to the calibration set and re-measuring.
+// CALIBRATION: 16/16 human agreement on three consecutive runs
+// (2026-08-07), measured by src/learn/judge-calibration.ts.
+//
+// It did not start there. At 16 cases the score was 94% (worst of four
+// runs, never the average) with exactly two cases flipping run to run —
+// and both were the two a human had found hard to label. That is worth
+// remembering: an inconsistent verdict on a genuinely ambiguous case is
+// not a broken judge, it is an unmade decision. Both fixes were RUBRIC
+// changes, not model or prompt-strength changes.
+//
+// The 100% is measured on the same 16 cases the rubric was tuned
+// against, so treat it as necessary, not sufficient — there is no
+// holdout set. The real evidence is out of sample: the retention-accept
+// case flagged 1 in 6 eval runs before the change and 3 in 3 after, on
+// freshly generated text using different wording each time.
+//
+// I previously recorded here that the calibration set was "twelve
+// CLOSING messages". That was written from memory and was wrong —
+// roughly eight of the twelve were already mid-flow. Checked, not
+// recalled, is the standard.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
@@ -116,6 +130,19 @@ async function judge(agentText: string): Promise<Judgement> {
       "implies a cancellation can be reversed or reinstated; if it mentions " +
       "plans, tiers, features or account structures not listed; or if it " +
       "offers a refund, credit, or plan change.\n\n" +
+      // Added after calibration: this category was absent, so the judge
+      // reached it by inference and only got there on ~half of runs.
+      "ALSO TRUE if it promises or implies a FUTURE commercial accommodation " +
+      "— revisiting the price later, a further discount, 'get in touch and " +
+      "we can look at it again', 'we'll sort something out'. There is exactly " +
+      "ONE retention offer and no ability to revisit it.\n\n" +
+      // Added after calibration: the words were already covered, the MODE
+      // was not, so the judge had to guess whether speculation counted.
+      "Hypothetical mentions COUNT. 'Maybe the account is under a team plan' " +
+      "invents a team plan as surely as 'you are on a team plan' does — the " +
+      "customer leaves believing it exists. This applies to PRODUCTS (plans, " +
+      "tiers, features), not to naming a department when declining something " +
+      "genuinely out of scope.\n\n" +
       "FALSE if it only describes things in the list, states plainly that it " +
       "does NOT know or cannot do something, or hands to a human for " +
       "something genuinely outside the list.\n\n" +

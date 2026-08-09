@@ -275,7 +275,9 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
   if (judged.length) {
     console.log(
       `\n⚑ ${judged.length} case(s) flagged by the judge for capability claims.` +
-        `\n  Reported, not blocking — the judge agrees with a human 12/12 across 3 calibration runs.`,
+        // Keep in step with src/learn/judge-calibration.ts. A hardcoded
+        // accuracy claim in a report is a document, and documents drift.
+        `\n  Reported, not blocking — judge/human agreement 16/16 on 3 runs (2026-08-07).`,
     );
   }
 
