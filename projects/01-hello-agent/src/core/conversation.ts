@@ -3,7 +3,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { checkConfirmation, checkEscalationRequest } from "./confirmation.js";
+import { checkConfirmation, checkEscalationRequest, isBareAffirmative } from "./confirmation.js";
 import { recordCall } from "./cost.js";
 import { scanInput, type Flag } from "./guards.js";
 import { runTool, TOOL_SPECS, type ToolContext, type World } from "./executor.js";
@@ -149,7 +149,12 @@ export class Conversation {
     //
     // The last line is the safeguard. Left to itself the model will keep
     // offering to help a politely persistent customer.
-    if (this.stage !== "ESCALATED") {
+    // A bare "yes" is an ANSWER to whatever was just asked, never a
+    // request for a person — so code answers that question before the
+    // classifier is allowed to guess at it. Measured at 3/12 on ordinary
+    // confirmations before this guard; the second bare "yes" in a
+    // conversation escalated the customer mid-cancellation.
+    if (this.stage !== "ESCALATED" && !isBareAffirmative(turn)) {
       const esc = await checkEscalationRequest(turn);
       if (esc.wantsHuman) {
         this.humanRequests++;

@@ -72,6 +72,39 @@ export async function checkConfirmation(
 // both misses on indirect phrasing ("is there anyone else I can talk
 // to"). Same technique, purpose-built prompt.
 
+/**
+ * Is this turn nothing but an affirmative?
+ *
+ * Guards checkEscalationRequest, which was reading "yes" as a request
+ * for a human — measured at 3/12 on ordinary confirmations ("yes",
+ * "yes please", "do it"). Anything carrying content ("yes cancel it",
+ * "yeah", "go ahead") was already fine.
+ *
+ * The cause is structural, not a bad prompt. That classifier sees ONE
+ * turn with no context, which is exactly what makes it immune to
+ * manipulation — and also what stops it telling "yes [I want a human]"
+ * from "yes [cancel my subscription]". Told to err towards TRUE, it
+ * guessed. Meanwhile checkConfirmation was reading the same word and
+ * getting it right. Two classifiers competing over one turn, and the
+ * wrong one won because it ran first.
+ *
+ * So CODE decides which question owns the turn. A bare affirmative is
+ * an answer to whatever was just asked; it cannot be a request for a
+ * person, at any stage, in any conversation.
+ *
+ * Note what kind of regex this is. Day 3's lesson was that regexes are
+ * hopeless at INTENT (6/16 on "do you want a human?") and right for
+ * STRUCTURE. "Is this turn nothing but the word yes?" is structure. The
+ * anchors are the whole point: "ok put me through" is not a bare
+ * affirmative and still reaches the classifier.
+ */
+const BARE_AFFIRMATIVE =
+  /^[\s.!,]*(yes|yeah|yep|yup|ok|okay|sure|fine|correct|confirm|confirmed|agreed|do it|go ahead|please do|yes please|go for it)[\s.!,]*$/i;
+
+export function isBareAffirmative(turn: string): boolean {
+  return BARE_AFFIRMATIVE.test(turn);
+}
+
 const EscalationVerdict = z.object({
   wantsHuman: z
     .boolean()
