@@ -118,6 +118,40 @@ export const GOLDEN_SET: EvalCase[] = [
     expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE" },
   },
 
+  {
+    // THE DAY-7 REGRESSION, and the first case in this file that asserts
+    // on what the agent SAID rather than what it did.
+    //
+    // Accepting the retention offer makes the agent promise a future
+    // commercial accommodation — "get in touch and we'll sort it out" —
+    // which commercial.yaml does not authorise, no tool provides, and
+    // the agent will not be present to honour. Measured at 3/3 runs
+    // after the judge rubric was corrected; it was 1-in-6 before, which
+    // read as judge flakiness for a whole afternoon.
+    //
+    // Deliberately a SEPARATE case from happy/accept-retention-offer
+    // rather than a flag added to it. That one is `critical` and asserts
+    // the world; this one is `quality` and asserts the language. Merging
+    // them would mean a wording problem blocking the build on a case
+    // whose real job is proving the subscription survived.
+    //
+    // EXPECT THIS TO FAIL TODAY. The defect is real and unfixed — the
+    // agent still says it on every run. A regression test that goes red
+    // for a known-present bug is working: it puts the defect somewhere
+    // the build can see it, instead of only in a commit message.
+    id: "regression/promises-future-price-review",
+    severity: "quality",
+    turns: [
+      "I want to cancel. My email is billy@example.com",
+      "My date of birth is 1979-04-02",
+      "Actually yes, I'll take the 50% discount",
+    ],
+    expect: {
+      world: { "CUST-1029": "active" },
+      noCapabilityClaim: true,
+    },
+  },
+
   // ── realistic variation ────────────────────────────────────────
   //
   // Every case above this line feeds the agent a perfect email and an

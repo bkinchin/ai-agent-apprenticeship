@@ -25,6 +25,33 @@ export interface Expectation {
   finalStage?: Stage;
   /** If a tool was denied, the rule that must have denied it. */
   deniedBy?: string;
+  /**
+   * The agent must not misrepresent its capabilities anywhere in this
+   * conversation. Judged, and unlike the general quality score this one
+   * COUNTS — it can fail the case.
+   *
+   * That looks like a contradiction of the rule this file is built on
+   * ("judges trend, never gate"), so be precise about the difference:
+   *
+   *   "Is the quality good?"      unbounded, fuzzy, subjective.
+   *                               A gate here gets the suite switched
+   *                               off within a month. Trend it.
+   *
+   *   "Did THIS KNOWN DEFECT      binary, opt-in per case, and the bug
+   *    come back?"                has already been observed once in
+   *                               production. That is a regression test
+   *                               that happens to need a model to run.
+   *
+   * Day 7's rule is that every production bug becomes a permanent test
+   * case, forever. Without this field, any defect that lives in what the
+   * agent SAYS could never become one — the harness could assert on the
+   * world, the tools and the stage, and nothing else.
+   *
+   * Setting this FORCES judging on for the case even without --judge. An
+   * assertion that silently does not run is worse than no assertion,
+   * because you believe you are covered.
+   */
+  noCapabilityClaim?: boolean;
 }
 
 export interface EvalCase {
@@ -59,6 +86,27 @@ export interface CaseResult {
    * report the second as the first.
    */
   errored?: string;
+}
+
+/**
+ * Does an opted-in capability assertion pass, fail, or fail to run?
+ *
+ * Pure, so the boundary between "trend" and "gate" is testable without
+ * spending a penny or waiting on a model. The branch that matters most
+ * is the last one: a case that did NOT opt in must never fail because
+ * the judge happened to flag something. That is the whole line between
+ * a reported metric and an assertion.
+ */
+export function checkCapabilityAssertion(
+  expect: Expectation,
+  quality?: { claimsFalseCapability: boolean; quote: string; unavailable?: boolean },
+): { failure?: string; errored?: string } {
+  if (!expect.noCapabilityClaim) return {};
+  if (!quality || quality.unavailable) {
+    return { errored: "noCapabilityClaim asserted but the judge could not answer" };
+  }
+  if (quality.claimsFalseCapability) return { failure: `capability claim: "${quality.quote}"` };
+  return {};
 }
 
 export async function runCase(
@@ -101,7 +149,9 @@ export async function runCase(
   // which is 8% of the conversation rather than 2% — still trivial next
   // to what the agent itself spends.
   let quality: { claimsFalseCapability: boolean; quote: string; unavailable?: boolean } | undefined;
-  if (judge) {
+  // A case that ASSERTS on capability claims judges itself, whether or
+  // not the run asked for judging.
+  if (judge || c.expect.noCapabilityClaim) {
     const judged = [];
     for (const r of replies) judged.push(await judgeCapabilityClaims(r));
     const firstProblem = judged.find((j) => j.claimsFalseCapability);
@@ -115,6 +165,16 @@ export async function runCase(
       ...(judged.some((j) => j.unavailable) ? { unavailable: true } : {}),
     };
   }
+
+  // ── the asserted capability claim ──────────────────────────────
+  //
+  // Never inferred from the general quality score — only checked when a
+  // case opted in. `errored` rather than `failures` when the judge could
+  // not answer: an unverified assertion is not a failed one, and calling
+  // it a pass is the exact mistake this file keeps finding elsewhere.
+  const asserted = checkCapabilityAssertion(expect, quality);
+  if (asserted.failure) failures.push(asserted.failure);
+  const errored = asserted.errored;
 
   // ── the world ──────────────────────────────────────────────────
   for (const [customerId, expected] of Object.entries(expect.world ?? {})) {
@@ -148,7 +208,10 @@ export async function runCase(
 
   return {
     id: c.id,
-    pass: failures.length === 0,
+    // An unverifiable assertion is not a pass. The structural checks
+    // still ran and are still reported — you lose the quality verdict,
+    // not the whole case.
+    pass: failures.length === 0 && errored === undefined,
     severity: c.severity ?? "quality",
     failures,
     called,
@@ -157,6 +220,7 @@ export async function runCase(
     ms: Date.now() - started,
     cost: since(costFrom),
     ...(quality ? { quality } : {}),
+    ...(errored ? { errored } : {}),
   };
 }
 

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { reportRepeated, type CaseResult, type RepeatedResult } from "./eval.js";
+import { checkCapabilityAssertion, reportRepeated, type CaseResult, type RepeatedResult } from "./eval.js";
 import type { CostSummary } from "./cost.js";
 
 const noCost: CostSummary = {
@@ -88,4 +88,48 @@ test("one critical failure among many passes still blocks", () => {
     repeated({ id: "c", passed: 2, flaky: true, worst: result(false, ["boom"]) }),
   ];
   assert.equal(reportRepeated(rs), false);
+});
+
+// ── the trend/gate boundary ──────────────────────────────────────
+
+test("a case that did not opt in never fails on a capability claim", () => {
+  // The single most important branch. The judge flags things on ordinary
+  // cases all the time — that is a trend, not a verdict. If this ever
+  // returns a failure, the judge has silently become a gate on every
+  // case in the suite and someone will switch the suite off.
+  const r = checkCapabilityAssertion({}, { claimsFalseCapability: true, quote: "we'll sort it out" });
+  assert.deepEqual(r, {});
+});
+
+test("an opted-in case fails on a capability claim, with the quote", () => {
+  const r = checkCapabilityAssertion(
+    { noCapabilityClaim: true },
+    { claimsFalseCapability: true, quote: "we'll sort it out" },
+  );
+  assert.match(r.failure ?? "", /we'll sort it out/);
+  assert.equal(r.errored, undefined);
+});
+
+test("an opted-in case ERRORS when the judge could not answer", () => {
+  // Not a failure — unverified. Calling this a pass is the mistake this
+  // codebase has now made twice in two different places.
+  const r = checkCapabilityAssertion(
+    { noCapabilityClaim: true },
+    { claimsFalseCapability: false, quote: "", unavailable: true },
+  );
+  assert.equal(r.failure, undefined);
+  assert.match(r.errored ?? "", /could not answer/);
+});
+
+test("an opted-in case errors if judging never ran at all", () => {
+  const r = checkCapabilityAssertion({ noCapabilityClaim: true }, undefined);
+  assert.match(r.errored ?? "", /could not answer/);
+});
+
+test("an opted-in case passes cleanly when nothing was claimed", () => {
+  const r = checkCapabilityAssertion(
+    { noCapabilityClaim: true },
+    { claimsFalseCapability: false, quote: "" },
+  );
+  assert.deepEqual(r, {});
 });
