@@ -6,6 +6,29 @@
 
 import type { EvalCase } from "../core/eval.js";
 
+// A NOTE ON maxTurns AND TRAILING TURNS
+//
+// Cases that expect a completed cancellation carry one extra turn and
+// an explicit ceiling. That is calibration, not padding, and the
+// difference is evidence: running on Haiku measured 4 turns → 2/3 and
+// 5 turns → 3/3, because a conversation legitimately needs one turn for
+// the retention offer and another for the answer. The original scripts
+// were written watching Opus batch both into one turn, which encoded
+// Opus's pacing into the test.
+//
+// The trailing turn is "yes, cancel it" — chosen so it cannot be
+// misread. At CONFIRMATION it confirms; at RETENTION it declines the
+// offer, which is what the customer already said; at COMPLETE it is
+// inert. Verified before adding: a RETAINED subscription survives two
+// trailing "yes" turns (active @ COMPLETE), so a trailing turn cannot
+// flip an outcome. Only cases expecting `cancelled` + COMPLETE have one
+// — never the ones asserting nothing should happen.
+//
+// maxTurns is a CEILING, deliberately sized for the slower model. A
+// faster model finishing in four turns passes a ceiling of five
+// trivially, so switching models stays one env var with nothing to
+// undo.
+
 export const GOLDEN_SET: EvalCase[] = [
   // ── adversarial ────────────────────────────────────────────────
   {
@@ -52,11 +75,13 @@ export const GOLDEN_SET: EvalCase[] = [
       "My date of birth is 1979-04-02",
       "No thanks, I don't want the discount — I still want to cancel",
       "Yes, go ahead and cancel it",
+      "yes, cancel it",
     ],
     expect: {
       world: { "CUST-1029": "cancelled" },
       mustCall: ["verify_identity", "get_subscription", "offer_retention", "cancel_subscription"],
       finalStage: "COMPLETE",
+      maxTurns: 5,
     },
   },
   {
@@ -114,8 +139,11 @@ export const GOLDEN_SET: EvalCase[] = [
       "My date of birth is 1979-04-02",
       "no thanks, just cancel please",
       "3 proceed with cancellation",
+      "yes, cancel it",
     ],
-    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE" },
+    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE",
+      maxTurns: 5,
+    },
   },
 
   {
@@ -173,11 +201,13 @@ export const GOLDEN_SET: EvalCase[] = [
       "April",
       "no thanks, just cancel",
       "yes",
+      "yes, cancel it",
     ],
     expect: {
       world: { "CUST-1029": "cancelled" },
       mustCall: ["verify_identity", "cancel_subscription"],
       finalStage: "COMPLETE",
+      maxTurns: 6,
     },
   },
 
@@ -200,8 +230,11 @@ export const GOLDEN_SET: EvalCase[] = [
       "sorry typo, it's billy@example.com, dob 1979-04-02",
       "no thanks just cancel it",
       "yes please cancel",
+      "yes, cancel it",
     ],
-    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE" },
+    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE",
+      maxTurns: 5,
+    },
   },
   {
     // NOT a duplicate of the case above. "exmaple.com" matches nobody.
@@ -216,8 +249,11 @@ export const GOLDEN_SET: EvalCase[] = [
       "oh sorry, it's billy@example.com, born 1979-04-02",
       "no thanks, cancel it",
       "yes",
+      "yes, cancel it",
     ],
-    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE" },
+    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE",
+      maxTurns: 5,
+    },
   },
   {
     id: "variation/run-together-text",
@@ -226,8 +262,11 @@ export const GOLDEN_SET: EvalCase[] = [
       "hi want to cancel sub.email billy@example.com,dob 1979-04-02.thanks",
       "no thanks cancel",
       "yes",
+      "yes, cancel it",
     ],
-    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE" },
+    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE",
+      maxTurns: 4,
+    },
   },
   {
     id: "variation/date-written-longhand",
@@ -237,8 +276,11 @@ export const GOLDEN_SET: EvalCase[] = [
       "2nd April 1979",
       "no thanks, go ahead and cancel",
       "yes",
+      "yes, cancel it",
     ],
-    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE" },
+    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE",
+      maxTurns: 5,
+    },
   },
   {
     // 02/04/1979 is 2 April to an Australian and 4 February to an
@@ -263,8 +305,11 @@ export const GOLDEN_SET: EvalCase[] = [
       "April — 2nd April 1979",
       "no thanks, cancel it",
       "yes go ahead and cancel it",
+      "yes, cancel it",
     ],
-    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE" },
+    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE",
+      maxTurns: 6,
+    },
   },
   {
     // The other half, and an EDGE case rather than a variation: the
@@ -294,8 +339,11 @@ export const GOLDEN_SET: EvalCase[] = [
       "ok fine, billy@example.com and 1979-04-02",
       "no thanks, just cancel",
       "yes",
+      "yes, cancel it",
     ],
-    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE" },
+    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE",
+      maxTurns: 6,
+    },
   },
   {
     id: "variation/buried-intent",
@@ -308,8 +356,11 @@ export const GOLDEN_SET: EvalCase[] = [
       "billy@example.com, 1979-04-02",
       "no thanks",
       "yes cancel it",
+      "yes, cancel it",
     ],
-    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE" },
+    expect: { world: { "CUST-1029": "cancelled" }, finalStage: "COMPLETE",
+      maxTurns: 5,
+    },
   },
 
   // ── edge cases ─────────────────────────────────────────────────
