@@ -138,49 +138,14 @@ export class Conversation {
   }
 
   /**
-   * Did this turn turn the retention offer down?
-   *
-   * Runs ONCE, at the top of the turn, and the timing is the point.
-   *
-   * I briefly added a second call after the tool loop, reasoning that
-   * an offer made mid-turn would otherwise miss its own decline. That
-   * was wrong, and a transcript caught it:
-   *
-   *   › yes please cancel
-   *      → cancel_subscription(...)   Not permitted: check offers first
-   *      → offer_retention(...)       ← the offer is made HERE
-   *      [code] retention offer declined — "yes please cancel"
-   *
-   * The customer declined an offer they had never seen. "yes please
-   * cancel" was written before offer_retention ran; scoring it against
-   * "turn down the retention offer" affirmed, and the retention policy
-   * was satisfied by a turn that predated the offer.
-   *
-   * That is precisely what day 6 built this to prevent: offered and
-   * declined are different facts, and the second one requires the
-   * customer to have actually CONSIDERED the offer. Only a turn that
-   * arrives after the offer can decline it — which is what checking at
-   * the top of the turn, gated on stage === RETENTION, already
-   * guaranteed.
-   *
-   * The Haiku stalls that prompted the change were the turn budget, not
-   * this. A conversation legitimately needs one turn for the offer and
-   * another for the answer.
-   */
-  /**
    * Move the stage on, and do everything a stage change implies.
    *
    * This existed inline in THREE places and only two of them set
    * `pending` — so whichever transition reached CONFIRMATION decided
    * whether the next turn's confirmation check would run at all. It
    * worked only because the two complete copies happened to be the ones
-   * that fired.
-   *
-   * Found by fixing the retention-decline ordering: that made the third
-   * (incomplete) site the one reaching CONFIRMATION, and the failures
-   * moved from "stuck at RETENTION" to "stuck at CONFIRMATION" — the
-   * same bug one stage later. Copy-paste state machines drift, and they
-   * drift silently.
+   * that fired. Copy-paste state machines drift, and they drift
+   * silently: nothing was testing that all three sites agreed.
    */
   private advanceStage(events: string[]): void {
     const before = this.stage;
@@ -196,18 +161,79 @@ export class Conversation {
     }
   }
 
+  /**
+   * What did this turn say about the retention offer?
+   *
+   * The agent has just asked "would you like me to apply that?", so an
+   * affirmative means ACCEPT. Reading it as a decline is a live bug
+   * this replaced:
+   *
+   *   claude › ...50% off for 3 months. Would you like me to apply that?
+   *   you    › ok go on then
+   *   [code] retention offer declined — "ok go on then"     ← WRONG
+   *
+   * Code then advanced to CONFIRMATION, which withdraws apply_retention,
+   * so the agent correctly found it had no tool for what the customer
+   * had just agreed to and escalated. The agent was right; the code was
+   * wrong. Nothing was cancelled, but the customer lost their discount
+   * and a human had to clean up.
+   *
+   * ASK BOTH QUESTIONS AND REQUIRE THEM TO DISAGREE. Measured — five
+   * phrasings affirm both:
+   *
+   *     "ok go on then"    decline=YES  accept=YES
+   *     "sure"             decline=YES  accept=YES
+   *     "yeah alright"     decline=YES  accept=YES
+   *     "no thanks, cancel" decline=YES accept=no    ← content decides
+   *     "I'll take it"      decline=no  accept=YES
+   *
+   * A bare affirmative says yes to whatever it is asked, because the
+   * classifier cannot see WHICH question was asked. Agreement between
+   * two opposite questions therefore means the turn carried no content
+   * and settles nothing — which is structural, and does not need a
+   * list of phrasings that will never be complete.
+   *
+   * This is the fourth appearance of one root cause: a classifier
+   * answers in isolation, but a turn's MEANING depends on what the
+   * agent just asked. Isolation is what makes these injection-proof
+   * and what makes them blind.
+   *
+   * Still runs once, at the top of the turn. Only a turn that arrives
+   * AFTER the offer can answer it — see day 6, and the regression I
+   * introduced by moving this after the tool loop.
+   */
   private async checkRetentionDecline(turn: string, events: string[]): Promise<void> {
     if (this.stage !== "RETENTION") return;
     if (!this.ctx.state.retentionOffered) return;
     if (this.ctx.state.retentionDeclined) return;
 
-    const check = await checkConfirmation(
-      "Turn down the retention offer and go ahead with cancelling the subscription.",
-      turn,
-    );
-    if (check.affirms) {
+    // Cheap structural check first — saves two guard calls on the most
+    // common answer of all.
+    if (isBareAffirmative(turn)) {
+      events.push(`[code] "${turn}" answers the offer — reads as ACCEPT, not a decline`);
+      return;
+    }
+
+    const [decline, accept] = await Promise.all([
+      checkConfirmation(
+        "Turn down the retention offer and go ahead with cancelling the subscription.",
+        turn,
+      ),
+      checkConfirmation(
+        "Accept the retention offer of 50% off for 3 months and keep the subscription.",
+        turn,
+      ),
+    ]);
+
+    if (decline.affirms && !accept.affirms) {
       this.ctx.state.retentionDeclined = true;
-      events.push(`[code] retention offer declined — "${check.quote}"`);
+      events.push(`[code] retention offer declined — "${decline.quote}"`);
+      return;
+    }
+    if (decline.affirms && accept.affirms) {
+      // Content-free. Leave the stage alone so apply_retention stays
+      // available and the agent can act on what they actually meant.
+      events.push(`[code] "${turn}" affirms both readings — settles nothing, staying at RETENTION`);
     }
   }
 

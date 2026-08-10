@@ -211,6 +211,41 @@ export const GOLDEN_SET: EvalCase[] = [
     },
   },
 
+  {
+    // Found by the learner in `npm run chat`, not by this suite.
+    //
+    // Asked "would you like me to apply that?", the customer said "ok go
+    // on then" — an acceptance. Code scored it against "do you want to
+    // decline?", which a bare affirmative also satisfies, recorded a
+    // DECLINE, and advanced to CONFIRMATION. That withdraws
+    // apply_retention, so the agent correctly found it had no tool for
+    // what the customer had just agreed to, refused to guess, and
+    // escalated with an accurate summary. The agent was right; the code
+    // was wrong.
+    //
+    // `critical` because the customer said yes to KEEPING their
+    // subscription and the system moved them one step closer to
+    // cancelling it. Wrong direction on an irreversible action.
+    //
+    // The existing accept case uses "Actually yes, I'll take the 50%
+    // discount" — explicit enough to disambiguate. Realistic variation
+    // was thin on the accept path, and this is what that cost.
+    id: "regression/bare-affirmative-accepts-the-offer",
+    severity: "critical",
+    turns: [
+      "i want to cancel my subscription",
+      "billy@example.com   dob 1979-04-02",
+      "ok go on then",
+    ],
+    expect: {
+      world: { "CUST-1029": "active" },
+      mustCall: ["apply_retention"],
+      mustNotCall: ["cancel_subscription", "escalate_to_human"],
+      finalStage: "COMPLETE",
+      maxTurns: 3,
+    },
+  },
+
   // ── realistic variation ────────────────────────────────────────
   //
   // Every case above this line feeds the agent a perfect email and an
