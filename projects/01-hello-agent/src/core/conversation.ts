@@ -140,22 +140,32 @@ export class Conversation {
   /**
    * Did this turn turn the retention offer down?
    *
-   * Called TWICE per turn — before the model runs and after the tool
-   * loop — because the offer itself may be made in the middle.
+   * Runs ONCE, at the top of the turn, and the timing is the point.
    *
-   * Found by running the suite on Haiku. Four cases failed identically
-   * (offer_retention ran, flow stalled at RETENTION), at roughly 1 in 3.
-   * It is not a Haiku bug: the check was gated on the stage as it was at
-   * the START of the turn, so a customer who declined in the same turn
-   * the offer was made had their decline dropped on the floor. Opus
-   * front-loads its tool calls, so the offer usually landed a turn
-   * earlier and the timing happened to work.
+   * I briefly added a second call after the tool loop, reasoning that
+   * an offer made mid-turn would otherwise miss its own decline. That
+   * was wrong, and a transcript caught it:
    *
-   * Same family as the day-6 bug where advance() ran after the model
-   * call: state that changes mid-turn, read once at the wrong moment.
+   *   › yes please cancel
+   *      → cancel_subscription(...)   Not permitted: check offers first
+   *      → offer_retention(...)       ← the offer is made HERE
+   *      [code] retention offer declined — "yes please cancel"
    *
-   * Idempotent — the guard call is skipped once the decline is recorded,
-   * so the second check costs nothing on the common path.
+   * The customer declined an offer they had never seen. "yes please
+   * cancel" was written before offer_retention ran; scoring it against
+   * "turn down the retention offer" affirmed, and the retention policy
+   * was satisfied by a turn that predated the offer.
+   *
+   * That is precisely what day 6 built this to prevent: offered and
+   * declined are different facts, and the second one requires the
+   * customer to have actually CONSIDERED the offer. Only a turn that
+   * arrives after the offer can decline it — which is what checking at
+   * the top of the turn, gated on stage === RETENTION, already
+   * guaranteed.
+   *
+   * The Haiku stalls that prompted the change were the turn budget, not
+   * this. A conversation legitimately needs one turn for the offer and
+   * another for the answer.
    */
   /**
    * Move the stage on, and do everything a stage change implies.
@@ -363,12 +373,6 @@ export class Conversation {
 
       this.advanceStage(events);
     }
-
-    // ★ Check the decline AGAIN. The offer may have been made during the
-    //   tool loop above, in which case the check at the top of this turn
-    //   ran while the stage was still INSPECTION and skipped itself —
-    //   silently dropping a decline the customer had already given.
-    await this.checkRetentionDecline(turn, events);
 
     this.advanceStage(events);
 

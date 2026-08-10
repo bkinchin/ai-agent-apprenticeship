@@ -61,11 +61,20 @@ export const GUARD_MODEL = checked(
   "guard",
 );
 
-/** Printed at the top of a run so no report is ambiguous about what produced it. */
+/**
+ * Printed at the top of a run so no report is ambiguous about what
+ * produced it.
+ *
+ * It used to append "← OVERRIDDEN, not a baseline" whenever the agent
+ * model differed from the default. That was wrong: it assumed Opus was
+ * canonical and anything else was a deviation. Which model this project
+ * targets is a DECISION, not a default — and the honest reason to pick
+ * a cheap one is that a baseline you can afford to re-run catches more
+ * regressions than a precise one you run twice.
+ *
+ * So it just names the model. Switching is `ANTHROPIC_MODEL=...` or
+ * unsetting it; there is nothing in the code to change either way.
+ */
 export function modelBanner(): string {
-  const overridden = AGENT_MODEL !== DEFAULT_AGENT;
-  return (
-    `agent: ${AGENT_MODEL}${overridden ? "  ← OVERRIDDEN, not a baseline" : ""}` +
-    `   guards: ${GUARD_MODEL}`
-  );
+  return `agent: ${AGENT_MODEL}   guards: ${GUARD_MODEL}`;
 }
