@@ -25,6 +25,7 @@ const result = (pass: boolean, failures: string[] = []): CaseResult => ({
   denied: [],
   finalStage: "VERIFICATION",
   ms: 1000,
+  turnsUsed: 4,
   cost: noCost,
 });
 
@@ -38,6 +39,7 @@ const repeated = (over: Partial<RepeatedResult>): RepeatedResult => ({
   avgMs: 1000,
   cost: noCost,
   errored: 0,
+  incomplete: 0,
   flaggedByJudge: 0,
   judgeQuote: "",
   judgeUnavailable: 0,
@@ -132,4 +134,49 @@ test("an opted-in case passes cleanly when nothing was claimed", () => {
     { claimsFalseCapability: false, quote: "" },
   );
   assert.deepEqual(r, {});
+});
+
+// ── incomplete is a third state, not a soft failure ──────────────
+
+test("a case that only ran out of script does not block the build", () => {
+  // Unknown, not failed. Blocking here would train people to pad
+  // scripts with filler turns — and in a cancellation flow the natural
+  // filler is "yes, go ahead", which builds a harness that cancels
+  // subscriptions to make its own tests pass.
+  const r = repeated({
+    passed: 0,
+    incomplete: 3,
+    worst: result(false, ["CUST-1029 is active, expected cancelled"]),
+  });
+  assert.equal(reportRepeated([r]), true, "incompleteness is not evidence of a defect");
+});
+
+test("a case that passes sometimes and stalls otherwise does not block", () => {
+  // 2 passed, 1 stalled, 0 finished-and-wrong. Nothing here is evidence
+  // of a defect, so the build stays green and the ◌ bucket reports it.
+  const r = repeated({
+    passed: 2,
+    incomplete: 1,
+    flaky: true,
+    worst: result(false, ["CUST-1029 is active, expected cancelled"]),
+  });
+  assert.equal(reportRepeated([r]), true);
+});
+
+test("but a run that FINISHED and got it wrong still blocks", () => {
+  // The escape hatch must not launder real failures. Two runs stalled,
+  // one completed with the wrong outcome — that one is a finding.
+  // 0 passed, 2 stalled, 3 runs → one run finished and was wrong.
+  const r = repeated({
+    passed: 0,
+    incomplete: 2,
+    worst: result(false, ["CUST-2044 is cancelled, expected active"]),
+  });
+  assert.equal(reportRepeated([r]), false, "a completed wrong run is still a failure");
+});
+
+test("incomplete runs are never counted as passes", () => {
+  const r = repeated({ passed: 0, incomplete: 3, worst: result(false, ["x"]) });
+  assert.equal(r.passed, 0);
+  assert.equal(r.incomplete, 3);
 });

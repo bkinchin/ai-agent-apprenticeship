@@ -5,7 +5,8 @@
 import { reportRepeated, runRepeated, type RepeatedResult } from "../core/eval.js";
 import { GOLDEN_SET } from "../eval/golden-set.js";
 import { loadPolicy } from "../core/policy.js";
-import { modelBanner } from "../core/models.js";
+import { modelBanner, AGENT_MODEL } from "../core/models.js";
+import { writeFileSync, mkdirSync } from "node:fs";
 
 // npm run eval [filter] [--runs N]
 const args = process.argv.slice(2);
@@ -32,6 +33,47 @@ for (const c of cases) {
   const r = await runRepeated(c, policy, RUNS, JUDGE);
   console.log(`${r.passed}/${r.runs}${r.flaky ? " FLAKY" : ""}`);
   results.push(r);
+}
+
+// Emit the run as data as well as prose.
+//
+// Everything a picture of this suite would need is now recorded — which
+// case, how many turns, where it resolved or stalled, the tool
+// trajectory, and any judge finding — but printing it means it exists
+// once and is gone. Same lesson as the capability finding that was
+// printed and lost.
+//
+// Gitignored with the rest of eval-findings/: it contains conversation
+// text via the judge quotes.
+try {
+  mkdirSync("eval-findings", { recursive: true });
+  writeFileSync(
+    "eval-findings/last-run.json",
+    JSON.stringify(
+      {
+        at: new Date().toISOString(),
+        model: AGENT_MODEL,
+        cases: results.map((r) => ({
+          id: r.id,
+          severity: r.severity,
+          passed: r.passed,
+          runs: r.runs,
+          flaky: r.flaky,
+          incomplete: r.incomplete,
+          turnsToResolve: r.turnsToResolve,
+          finalStage: r.worst.finalStage,
+          called: r.worst.called,
+          failures: r.worst.failures,
+          judgeFlags: r.flaggedByJudge,
+          judgeQuote: r.judgeQuote || undefined,
+        })),
+      },
+      null,
+      2,
+    ),
+  );
+} catch {
+  // Recording a run must never break the run that produced it.
 }
 
 process.exit(reportRepeated(results) ? 0 : 1);

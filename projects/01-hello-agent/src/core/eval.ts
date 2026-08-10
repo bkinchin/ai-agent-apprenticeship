@@ -12,7 +12,7 @@ import { auditLog } from "./executor.js";
 import { judgeCapabilityClaims } from "./judge.js";
 import { Conversation, freshWorld } from "./conversation.js";
 import type { Policy } from "./policy.js";
-import type { Stage } from "./workflow.js";
+import { isTerminal, type Stage } from "./workflow.js";
 
 export interface Expectation {
   /** customerId → the status it must have when the conversation ends. */
@@ -52,6 +52,21 @@ export interface Expectation {
    * because you believe you are covered.
    */
   noCapabilityClaim?: boolean;
+  /**
+   * The conversation must FINISH within this many turns.
+   *
+   * Until now every case asserted this implicitly, at `critical`
+   * severity, by having a fixed script — and nobody chose it. Running
+   * the suite on a cheaper model made that visible: four cases failed
+   * only because they ran out of script (4 turns → 2/3, 5 turns → 3/3).
+   * A scripted conversation encodes how many turns the agent takes,
+   * which is a property of the MODEL, not the task.
+   *
+   * Set it deliberately, at `quality` severity, when efficiency is the
+   * thing you care about. Reaching the right outcome slowly is a
+   * different finding from reaching the wrong one.
+   */
+  maxTurns?: number;
 }
 
 export interface EvalCase {
@@ -86,6 +101,30 @@ export interface CaseResult {
    * report the second as the first.
    */
   errored?: string;
+  /** Turns actually sent. */
+  turnsUsed: number;
+  /** Turn at which the conversation first reached a terminal stage. */
+  resolvedAtTurn?: number;
+  /**
+   * The script ran out while the conversation was still mid-flow.
+   *
+   * NOT the same as a failure, and the distinction is the point. A case
+   * that stalls at RETENTION and one where the agent refused to cancel
+   * produce an identical line — "CUST-1029 is active, expected
+   * cancelled" — and mean completely different things. One is a defect;
+   * the other is a short test.
+   *
+   * Third time this codebase has had to draw this line: `unavailable`
+   * on the judge, `errored` on a case, and now this. A system that
+   * cannot tell "wrong" from "unknown" will eventually report one as
+   * the other.
+   *
+   * Deliberately ambiguous, and left that way: "script too short" and
+   * "agent stuck in a loop" have the same signature and no code can
+   * separate them. So it gets its own bucket with a human's name on it
+   * rather than being auto-classified as either.
+   */
+  incomplete?: boolean;
 }
 
 /**
@@ -127,9 +166,15 @@ export async function runCase(
   // — happened mid-conversation; by the end the agent had corrected
   // itself, so judging only the closing message misses it entirely.
   const replies: string[] = [];
+  let turnsUsed = 0;
+  let resolvedAtTurn: number | undefined;
   for (const turn of c.turns) {
+    turnsUsed++;
     const t = (await convo.send(turn)).text;
     if (t) replies.push(t);
+    // First arrival at a terminal stage is the resolution point — later
+    // turns are the customer saying thanks, not more work.
+    if (resolvedAtTurn === undefined && isTerminal(convo.stage)) resolvedAtTurn = turnsUsed;
   }
 
   const entries = auditLog.slice(auditFrom);
@@ -172,6 +217,20 @@ export async function runCase(
   // case opted in. `errored` rather than `failures` when the judge could
   // not answer: an unverified assertion is not a failed one, and calling
   // it a pass is the exact mistake this file keeps finding elsewhere.
+  // Only a case that ASKED to finish can be incomplete. attack/wrong-
+  // date-of-birth correctly ends at VERIFICATION and must never be
+  // reported as having run out of script.
+  const incomplete =
+    expect.finalStage !== undefined &&
+    isTerminal(expect.finalStage) &&
+    !isTerminal(convo.stage);
+
+  if (expect.maxTurns !== undefined && resolvedAtTurn === undefined) {
+    // no-op: an unresolved case is already reported as incomplete
+  } else if (expect.maxTurns !== undefined && resolvedAtTurn! > expect.maxTurns) {
+    failures.push(`took ${resolvedAtTurn} turns, expected at most ${expect.maxTurns}`);
+  }
+
   const asserted = checkCapabilityAssertion(expect, quality);
   if (asserted.failure) failures.push(asserted.failure);
   const errored = asserted.errored;
@@ -219,6 +278,9 @@ export async function runCase(
     finalStage: convo.stage,
     ms: Date.now() - started,
     cost: since(costFrom),
+    turnsUsed,
+    ...(resolvedAtTurn !== undefined ? { resolvedAtTurn } : {}),
+    ...(incomplete ? { incomplete: true } : {}),
     ...(quality ? { quality } : {}),
     ...(errored ? { errored } : {}),
   };
@@ -256,6 +318,10 @@ export interface RepeatedResult {
   judgeUnavailable: number;
   /** Runs that threw and produced no verdict. Not passes, not failures. */
   errored: number;
+  /** Runs where the script ran out mid-flow. Not passes, not failures either. */
+  incomplete: number;
+  /** Median turns to reach a terminal stage, across runs that got there. */
+  turnsToResolve?: number;
 }
 
 /**
@@ -299,6 +365,7 @@ export async function runRepeated(
         denied: [],
         finalStage: "GREETING",
         ms: 0,
+        turnsUsed: 0,
         cost: since(mark()),
       });
     }
@@ -320,21 +387,54 @@ export async function runRepeated(
     judgeQuote: results.find((r) => r.quality?.claimsFalseCapability)?.quality?.quote ?? "",
     judgeUnavailable: results.filter((r) => r.quality?.unavailable).length,
     errored: results.filter((r) => r.errored).length,
+    incomplete: results.filter((r) => r.incomplete).length,
+    // Median of the runs that actually resolved. A case that never
+    // finished has no turns-to-resolution — reporting 0 would drag the
+    // median down and make a stalled suite look efficient.
+    turnsToResolve: median(
+      results.map((r) => r.resolvedAtTurn).filter((n): n is number => n !== undefined),
+    ),
   };
+}
+
+function median(ns: number[]): number | undefined {
+  if (ns.length === 0) return undefined;
+  const sorted = [...ns].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
 }
 
 export function reportRepeated(results: RepeatedResult[]): boolean {
   console.log(`\n${"═".repeat(70)}`);
   for (const r of results) {
     const clean = r.passed === r.runs;
-    const mark = clean ? "✔" : r.severity === "critical" ? "✖ CRITICAL" : "✖";
+    // Keyed off the WORST run, because that is the one being described
+    // below. Keying it off "every run stalled" left flaky cases showing
+    // a world mismatch as though it were a finding.
+    const stalled = !clean && r.worst.incomplete === true;
+    const mark = clean
+      ? "✔"
+      : stalled
+        ? "◌ INCOMPLETE"
+        : r.severity === "critical"
+          ? "✖ CRITICAL"
+          : "✖";
     const flag = r.flaky ? "  ⚠ FLAKY" : "";
     console.log(
       `${mark}  ${r.id.padEnd(44)} ${r.passed}/${r.runs}${flag}  ` +
         `${(r.avgMs / 1000).toFixed(1)}s  ` +
         `$${r.cost.usd.toFixed(4)} (${r.cost.calls} calls)`,
     );
-    if (!clean) {
+    if (stalled) {
+      // Do NOT print the world/stage mismatches here. They are symptoms
+      // of the script ending, and reading them as findings is exactly
+      // the confusion this marker exists to prevent.
+      console.log(
+        `     ran out of script at ${r.worst.finalStage} after ${r.worst.turnsUsed} turn(s).`,
+      );
+      console.log(
+        "     Unknown, not failed — a short script and a stuck agent look identical here.",
+      );
+    } else if (!clean) {
       console.log(`     worst run called: ${r.worst.called.join(" → ") || "(none)"}`);
       for (const f of r.worst.failures) console.log(`     ↳ ${f}`);
     }
@@ -354,7 +454,16 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
   const fullyPassing = results.filter((r) => r.passed === r.runs).length;
   const flaky = results.filter((r) => r.flaky);
   const criticalFails = results.filter(
-    (r) => r.passed < r.runs && r.severity === "critical",
+    (r) =>
+      r.passed < r.runs &&
+      r.severity === "critical" &&
+      // Block only if some run neither passed NOR merely ran out of
+      // script — i.e. it finished and was wrong. A run that stalled is
+      // unknown, and blocking on unknown trains people to pad scripts
+      // with filler turns. In a cancellation flow the natural filler is
+      // "yes, go ahead", which builds a harness that cancels
+      // subscriptions to make its own tests pass.
+      r.passed + r.incomplete < r.runs,
   );
   const seconds = results.reduce((a, r) => a + r.avgMs * r.runs, 0) / 1000;
 
@@ -373,6 +482,17 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
       `(agent $${(agentUsd / results.length).toFixed(4)}, ` +
       `guards $${(guardUsd / results.length).toFixed(4)} — ${guardShare.toFixed(0)}%)`,
   );
+  const resolved = results
+    .map((r) => r.turnsToResolve)
+    .filter((n): n is number => n !== undefined);
+  if (resolved.length) {
+    const sorted = [...resolved].sort((a, b) => a - b);
+    console.log(
+      `turns to resolution: ${sorted[Math.floor(sorted.length / 2)]} median ` +
+        `(${sorted[0]}–${sorted[sorted.length - 1]}) across ${resolved.length} case(s)`,
+    );
+  }
+
   console.log(
     `at 100,000 conversations/day: $${(avg * 100_000).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day`,
   );
@@ -386,6 +506,16 @@ export function reportRepeated(results: RepeatedResult[]): boolean {
         // Keep in step with src/learn/judge-calibration.ts. A hardcoded
         // accuracy claim in a report is a document, and documents drift.
         `\n  Reported, not blocking — judge/human agreement 16/16 on 3 runs (2026-08-07).`,
+    );
+  }
+
+  const stalledCases = results.filter((r) => r.incomplete > 0 && r.passed < r.runs);
+  if (stalledCases.length) {
+    console.log(
+      `\n◌ ${stalledCases.length} case(s) ran out of script mid-flow — NOT counted as failures.` +
+        `\n  ${stalledCases.map((r) => r.id).join(", ")}` +
+        `\n  Either the agent stalled or the script is too short. Read one and decide;` +
+        `\n  do not pad the script until you know which.`,
     );
   }
 

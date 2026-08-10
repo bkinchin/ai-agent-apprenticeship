@@ -82,6 +82,15 @@ const FORWARD_MOVES: Record<Stage, Stage[]> = {
 const EXITS: Stage[] = ["ESCALATED"];
 const TERMINAL: Stage[] = ["COMPLETE", "ESCALATED"];
 
+/**
+ * Has this conversation finished, one way or another?
+ *
+ * Used by the eval to tell "the agent did the wrong thing" from "the
+ * script ran out mid-flow" — two things that produce an identical
+ * failure line and mean completely different things.
+ */
+export const isTerminal = (stage: Stage): boolean => TERMINAL.includes(stage);
+
 const ALLOWED_MOVES: Record<Stage, Stage[]> = Object.fromEntries(
   (Object.keys(FORWARD_MOVES) as Stage[]).map((from) => [
     from,
