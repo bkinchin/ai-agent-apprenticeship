@@ -137,6 +137,70 @@ export class Conversation {
     this.ctx = { policy, state: { subscriptionInspected: false }, world };
   }
 
+  /**
+   * Did this turn turn the retention offer down?
+   *
+   * Called TWICE per turn — before the model runs and after the tool
+   * loop — because the offer itself may be made in the middle.
+   *
+   * Found by running the suite on Haiku. Four cases failed identically
+   * (offer_retention ran, flow stalled at RETENTION), at roughly 1 in 3.
+   * It is not a Haiku bug: the check was gated on the stage as it was at
+   * the START of the turn, so a customer who declined in the same turn
+   * the offer was made had their decline dropped on the floor. Opus
+   * front-loads its tool calls, so the offer usually landed a turn
+   * earlier and the timing happened to work.
+   *
+   * Same family as the day-6 bug where advance() ran after the model
+   * call: state that changes mid-turn, read once at the wrong moment.
+   *
+   * Idempotent — the guard call is skipped once the decline is recorded,
+   * so the second check costs nothing on the common path.
+   */
+  /**
+   * Move the stage on, and do everything a stage change implies.
+   *
+   * This existed inline in THREE places and only two of them set
+   * `pending` — so whichever transition reached CONFIRMATION decided
+   * whether the next turn's confirmation check would run at all. It
+   * worked only because the two complete copies happened to be the ones
+   * that fired.
+   *
+   * Found by fixing the retention-decline ordering: that made the third
+   * (incomplete) site the one reaching CONFIRMATION, and the failures
+   * moved from "stuck at RETENTION" to "stuck at CONFIRMATION" — the
+   * same bug one stage later. Copy-paste state machines drift, and they
+   * drift silently.
+   */
+  private advanceStage(events: string[]): void {
+    const before = this.stage;
+    this.stage = advance(this.stage, this.ctx.state);
+    if (this.stage === before) return;
+
+    events.push(`[code] ${before} → ${this.stage}`);
+    if (this.stage === "CONFIRMATION" && this.ctx.state.verifiedCustomerId) {
+      this.pending = {
+        tool: "cancel_subscription",
+        customerId: this.ctx.state.verifiedCustomerId,
+      };
+    }
+  }
+
+  private async checkRetentionDecline(turn: string, events: string[]): Promise<void> {
+    if (this.stage !== "RETENTION") return;
+    if (!this.ctx.state.retentionOffered) return;
+    if (this.ctx.state.retentionDeclined) return;
+
+    const check = await checkConfirmation(
+      "Turn down the retention offer and go ahead with cancelling the subscription.",
+      turn,
+    );
+    if (check.affirms) {
+      this.ctx.state.retentionDeclined = true;
+      events.push(`[code] retention offer declined — "${check.quote}"`);
+    }
+  }
+
   async send(turn: string): Promise<TurnResult> {
     const events: string[] = [];
 
@@ -234,16 +298,7 @@ export class Conversation {
     // Did they turn the offer down? Same pattern as confirmation: a narrow
     // question, answered in isolation, recorded by code. "Offered" and
     // "declined" are different facts and only the second unlocks cancelling.
-    if (this.stage === "RETENTION" && this.ctx.state.retentionOffered) {
-      const check = await checkConfirmation(
-        "Turn down the retention offer and go ahead with cancelling the subscription.",
-        turn,
-      );
-      if (check.affirms) {
-        this.ctx.state.retentionDeclined = true;
-        events.push(`[code] retention offer declined — "${check.quote}"`);
-      }
-    }
+    await this.checkRetentionDecline(turn, events);
 
     // Confirmation. The model answers one narrow question in isolation;
     // YOUR CODE decides what to do with the answer and records it.
@@ -262,19 +317,7 @@ export class Conversation {
     //   may have unlocked the next stage, and the model must be given that
     //   stage's tools on THIS turn — not the next one. Otherwise it decides
     //   with a stale tool set and reasonably concludes it cannot help.
-    {
-      const before = this.stage;
-      this.stage = advance(this.stage, this.ctx.state);
-      if (this.stage !== before) {
-        events.push(`[code] ${before} → ${this.stage}`);
-        if (this.stage === "CONFIRMATION" && this.ctx.state.verifiedCustomerId) {
-          this.pending = {
-            tool: "cancel_subscription",
-            customerId: this.ctx.state.verifiedCustomerId,
-          };
-        }
-      }
-    }
+    this.advanceStage(events);
 
     this.messages.push({ role: "user", content: turn });
 
@@ -318,22 +361,16 @@ export class Conversation {
         break;
       }
 
-      const before = this.stage;
-      this.stage = advance(this.stage, this.ctx.state);
-      if (this.stage !== before) {
-        events.push(`[code] ${before} → ${this.stage}`);
-        if (this.stage === "CONFIRMATION" && this.ctx.state.verifiedCustomerId) {
-          this.pending = {
-            tool: "cancel_subscription",
-            customerId: this.ctx.state.verifiedCustomerId,
-          };
-        }
-      }
+      this.advanceStage(events);
     }
 
-    const before = this.stage;
-    this.stage = advance(this.stage, this.ctx.state);
-    if (this.stage !== before) events.push(`[code] ${before} → ${this.stage}`);
+    // ★ Check the decline AGAIN. The offer may have been made during the
+    //   tool loop above, in which case the check at the top of this turn
+    //   ran while the stage was still INSPECTION and skipped itself —
+    //   silently dropping a decline the customer had already given.
+    await this.checkRetentionDecline(turn, events);
+
+    this.advanceStage(events);
 
     return { stage: this.stage, text, events };
   }
