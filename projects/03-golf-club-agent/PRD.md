@@ -335,5 +335,247 @@ The agent must also never *agree*. "You're right, that green is terrible" is the
 
 ---
 
-*Sections 4–12 to follow.*
+## 4. Anti-requirements
+
+What the agent must **never** do. Each is specific, testable, and becomes both a policy rule and an eval case.
+
+The third column is not in the standard template and is the most important one. **Where a rule lives determines whether it is a guarantee or a suggestion.** A rule enforced only by a system prompt is a request the model will honour most of the time and fail on the unusual conversation — which is exactly the conversation that matters.
+
+| Mechanism | Strength |
+|---|---|
+| **Tool absent** | Absolute. A tool not in the request cannot be called. |
+| **Policy engine** | Absolute, if it cannot be bypassed. |
+| **State machine** | Absolute. The action does not exist in this state. |
+| **Code guard** | Absolute for structure; brittle for meaning. |
+| **Classifier** | Measured, never perfect. Must be calibrated. |
+| **Prompt** | No enforcement. Correct for *explaining*, useless for *guaranteeing*. |
+
+### Identity and data
+
+| # | The agent must never… | Enforced by |
+|---|---|---|
+| 1 | Disclose any booking, charge or membership detail before identity is verified | **State machine** — lookup tools do not exist before VERIFIED |
+| 2 | Reveal whether a given email or membership number exists on the system | **Code** — one shared failure response for "no such member" and "wrong details" |
+| 3 | Act on one member's account while verified as another | **State machine** — verified identity is compared to the target of every write |
+
+### Money
+
+| # | The agent must never… | Enforced by |
+|---|---|---|
+| 4 | Process a payment, take card details, or issue a refund | **Tool absent.** No payment tool exists in v1. |
+| 5 | Incur a charge on a member's account without stating the exact amount and receiving explicit confirmation **of that amount** | **Policy engine** — the write is refused unless a confirmation carrying the figure is recorded |
+| 6 | State a fee it did not compute from the booking timestamp | **Code** — fee is calculated and passed to the model, never authored by it |
+| 7 | Waive, discount, or promise to waive any fee | **Tool absent** + escalation |
+
+### Irreversible actions
+
+| # | The agent must never… | Enforced by |
+|---|---|---|
+| 8 | Cancel a booking without naming that specific booking back to the member and receiving confirmation | **Policy engine** — cancel refused without a confirmation matching that booking ID |
+| 9 | Cancel more than one booking from a single confirmation | **Policy engine** — one confirmation, one booking |
+| 10 | Infer *which* booking to cancel when the member holds more than one | **Code guard** — ambiguity blocks the tool, as with an unreadable date of birth |
+
+### Saying and doing
+
+| # | The agent must never… | Enforced by |
+|---|---|---|
+| 11 | Send a confirmation message composed by the model | **Architecture** — confirmations are generated from the tee-sheet record (§1) |
+| 12 | State that a booking, cancellation or charge has happened before the tool has returned success | **Code** — the model is told the result; it does not predict it |
+| 13 | Guess when a date, time or booking is ambiguous — it must ask | **Code guard** — ambiguity withdraws the tool |
+
+### Club rules
+
+| # | The agent must never… | Enforced by |
+|---|---|---|
+| 14 | Book inside a competition window (Sat 08:30–11:00) | **Policy engine**, from the competition calendar |
+| 15 | Exceed any club limit: 2 live bookings · 2 guests per booking · 6 guests per calendar month · 6 weeks ahead | **Policy engine** — each limit a separate, individually testable rule |
+
+### Complaints
+
+| # | The agent must never… | Enforced by |
+|---|---|---|
+| 16 | Alter, summarise or paraphrase a member's complaint in the record | **Code** — the member's turn is stored verbatim; the model never rewrites it |
+| 17 | Agree with a criticism of the course, the staff, or the club | **Classifier** (calibrated) + sampled human review. *No structural enforcement exists for this — see below.* |
+| 18 | Promise a fix, a timescale, or compensation | **Classifier** + human review |
+
+### Capability honesty
+
+| # | The agent must never… | Enforced by |
+|---|---|---|
+| 19 | Claim it will pass something to a colleague for something it can do itself | **Prompt** (explanation) + **LLM judge** in evaluation |
+| 20 | Offer, mention or imply a service outside v1 — equipment advice, membership tiers, what a membership includes | **Prompt** + **judge**, grounded on the real capability list |
+
+---
+
+### Three of these cannot be enforced structurally, and that is the point
+
+**#17, #18 and #19 have no absolute mechanism.** You cannot remove the agent's ability to agree with someone, or to be encouraging about a timescale — those are properties of language, not capabilities.
+
+This is worth stating plainly rather than hiding behind a policy table, because it changes what the club is buying:
+
+- Rules 1–16 are **guarantees**. They will hold on the ten-thousandth conversation and on the adversarial one.
+- Rules 17–20 are **measured behaviours**. They will be right most of the time, and the club needs a way to know the rate.
+
+Anyone reading this document should be able to tell those two categories apart at a glance, because the second category is where the reputational risk actually lives — and it maps exactly onto the one v1 job (complaints) whose success cannot be asserted.
+
+> A PRD that lists twenty "must nevers" without saying which are enforced and which are hoped for has promised twenty guarantees and can deliver sixteen.
+
+---
+
+## 5. Integration inventory
+
+| System | Owner | Access | Latency | Read/Write | Idempotency | Risk |
+|---|---|---|---|---|---|---|
+| **Tee sheet** (Google Sheet, `Bookings` tab) | Pro Shop Manager | Sheets API | ~1 s | **Write** | **None** | Double-booking · lost updates · staff editing concurrently |
+| **Membership** (same Sheet, `Members` tab) | Membership Secretary | Sheets API | ~1 s | Read | n/a | **PII in a Google Sheet** — see §10 |
+| **Guest allowances** (same Sheet, `Guests` tab) | Pro Shop Manager | Sheets API | ~1 s | **Write** | **None** | Allowance and booking cannot be updated atomically |
+| **Competition calendar** | Competition Secretary | Google Calendar | ~1 s | Read | n/a | Staleness · timezone |
+| **Confirmation email** | Pro Shop Manager | SMTP / transactional | ~1 s | Write | Retry-safe | Must be generated **from the sheet row** (§1) |
+| **Payments** | Finance | — | — | — | — | **EXCLUDED — see below** |
+
+### Explicitly excluded: payments
+
+No payment system is integrated in v1, deliberately. The agent takes no card details, processes no transaction, and issues no refund.
+
+Guest fees and late-cancellation fees are **recorded as charges against the member's account in the Sheet** and collected by the club through its existing process. The agent creates a liability; a human collects it. See §4 rules 4–7.
+
+---
+
+### The tee sheet is the project risk
+
+The curriculum's warning is that integration and data quality are harder than the AI. A Google Sheet makes that concrete: it is a perfectly reasonable way for a club to run today **and a genuinely unsafe system of record for an autonomous writer.**
+
+Six properties it does not have:
+
+| Missing | Consequence for an agent |
+|---|---|
+| **Idempotency** | A retried write creates a **second booking**. Network hiccups become double-bookings. |
+| **Transactions** | "Create booking" + "decrement guest allowance" cannot both succeed or both fail. One will land alone. |
+| **Row locking** | Two members booking the same slot both read "available", both write. |
+| **Referential integrity** | A booking can reference a member who does not exist. |
+| **A queryable audit trail** | Revision history exists but cannot answer "who changed row 412 and why". |
+| **Exclusive writers** | **Staff edit the sheet directly, all day.** Every read the agent makes is stale the moment it happens. |
+
+The last one is the one that cannot be engineered away. The agent is not the only writer and never will be — a member phones, someone opens the sheet, a row changes. Any check-then-write is racing a human being.
+
+### The consequence: the agent must not write to the tee sheet
+
+**Serialise the writes.** The agent never edits the sheet directly. It appends to a **booking-request log** — an append-only tab — and a single-threaded worker applies requests to the tee sheet in order.
+
+| Property | How the log provides it |
+|---|---|
+| Idempotency | Each request carries a client-generated ID. Replaying it is a no-op. |
+| Ordering | One worker, one queue. No two writes race. |
+| Atomicity | The worker applies booking + allowance together, or neither. |
+| Audit | The log *is* the audit trail, with the conversation ID attached. |
+| Rollback | Reverse a request without reconstructing what happened. |
+
+Appending to a log is the one thing a spreadsheet does safely, because it needs no read-then-write.
+
+This costs latency: a booking is *requested* immediately and *confirmed* within seconds rather than instantly. That is a **product decision** and it belongs in this document rather than being discovered during build — the member is told "booking that now, confirmation in a moment", not "booked".
+
+It is also the honest answer to the alternative: putting a real tee-sheet system in before v1. That may well be the right call, and this PRD does not decide it — it states the cost of not doing it.
+
+### Open question for the club
+
+Whether to migrate to a proper tee-sheet system before v1, or ship on the Sheet with the request log. **This is the single largest feasibility decision in the project** and it is not an AI decision. Recorded in §12.
+
+---
+
+## 6. Escalation design
+
+Escalation is a **product surface**, not an error path. It is one of the seven v1 jobs (§2) and the most likely single point of member dissatisfaction, because it always arrives when something has already gone sideways.
+
+| Trigger | Urgency | Target | Hours | SLA | What the member is told |
+|---|---|---|---|---|---|
+| Member asks for a person | Normal | Pro shop | Staffed | Immediate | *"Putting you through now."* |
+| Member disputes a club rule or a fee | Normal | Pro Shop Manager | Staffed | Same day | *"I can't overrule that — passing it to the manager, who'll come back to you today."* |
+| Complaint names a staff member | **High** | Pro Shop Manager, direct | Any | Same day | *"That needs a person, not me. I've sent it straight to the manager."* |
+| Member distressed, or threatens to resign | **High** | Pro Shop Manager, direct | Any | Same day | Warm, brief, no process language |
+| Tee sheet unreachable or erroring | **High** | Pro shop + ops alert | Any | 1 h | *"I can't reach the booking system. I've flagged it — please phone if it's urgent."* |
+| Ambiguity the agent cannot resolve after asking twice | Normal | Pro shop | Staffed | Next working period | *"I don't want to guess at this — I'll have someone call you."* |
+| Any request for a fee waiver | Normal | Pro Shop Manager | Staffed | Same day | *"Only the manager can do that. Passing it on."* |
+| Anything outside v1 scope | Low | Pro shop | Staffed | Next working period | *"That's not something I handle — I'll pass it to the team."* |
+
+### What the human receives
+
+Never a transcript dump. A structured handover:
+
+- Member name and membership number
+- What they were trying to do
+- **What the agent already did** — including anything written to the tee sheet
+- Why it escalated, in one line
+- The member's own words, verbatim, where the trigger was a complaint
+
+The third item is non-negotiable. A handover that does not say what was already written leaves the human unable to act without reconstructing the conversation — and worse, at risk of doing the same thing twice.
+
+### Out of hours
+
+This is the hard case and the one the club will judge the project on, because **it is exactly when the agent is most valuable and least supported.**
+
+The agent must never imply someone is coming. Outside 08:00–16:30 it states plainly what will happen and when:
+
+> *"There's nobody in the pro shop until 8am. I've logged this and the manager will see it first thing — you'll hear back before 10am. If it can't wait, the club's emergency number is …"*
+
+Two rules for out-of-hours escalation:
+
+1. **Never a bare "I can't help with that."** If the agent cannot act, it says what happens next and by when.
+2. **High-urgency triggers page the Pro Shop Manager regardless of the hour** — a distressed member or a broken tee sheet at 9pm is not a next-morning problem.
+
+### Deliberately not automated
+
+No auto-response, no ticket number as the primary reassurance, no "your query is important to us". A member escalating has already had one machine interaction that did not fully work. **The second one should feel like a person is now involved**, because one is.
+
+---
+
+## 7. Success metrics
+
+Seven metrics. Every one has a measurement method — if it cannot be measured it is not in this table.
+
+**Two are paired deliberately.** Containment and time-back both improve if the agent handles more conversations, and both improve *fastest* if it handles them badly. Each is therefore paired with a quality metric that moves the other way, so the pair cannot be gamed.
+
+| # | Metric | Baseline | Target | Measurement method | Owner |
+|---|---|---|---|---|---|
+| 1 | **Out-of-hours bookings created** | **0** | ≥ 3/day by month 3 | Count bookings created 16:30–08:00 from the request log | Pro Shop Manager |
+| 2 | **Out-of-hours booking error rate** *(pairs with 1)* | n/a | < 1% | Sample 50/month against confirmation-email corrections and no-shows | Pro Shop Manager |
+| 3 | **Interruptions during staffed hours** | ~20/day | **< 8/day by month 3** | Count member-initiated contacts reaching a human | Pro Shop Manager |
+| 4 | **Longest uninterrupted block, staffed hours** | ~25 min | **≥ 90 min** | Gap between human-handled contacts | Pro Shop Manager |
+| 5 | **Containment** — resolved without a human | 0% | 60–70% | Conversations ending with no escalation and a completed job | Pro Shop Manager |
+| 6 | **Escalation appropriateness** *(pairs with 5)* | n/a | ≥ 90% | Sampled review of 20 escalations/month: did this genuinely need a person? | Pro Shop Manager |
+| 7 | **Complaint acknowledgement quality** | n/a | ≥ 4/5 | **Human review of 20 complaint conversations/week**, scored on whether the member was heard | Pro Shop Manager |
+
+### Why #3 and #4 replace "70–80% of my time back"
+
+The manager's stated goal was 70–80% of their day returned. The arithmetic does not support it:
+
+```
+20 interactions × 4 min      =  80 min/day
+Staffed day                  = 510 min
+                             = ~16% of the day
+```
+
+**A perfect agent handling every interaction returns ~16% of the day.** Writing 70% into this document would guarantee the project fails against its own criteria however well it worked.
+
+But the manager is not wrong — they are describing the wrong quantity. 20 interruptions across 510 minutes is **one every 25 minutes**, which is what actually prevents the stock order, the lesson schedule, or a walk round the course. The cost is fragmentation, not duration.
+
+So the metric is **interruption count and block length**, not time saved. Going from 20 interruptions to 6 saves barely an hour and turns a fragmented day into three clear ones. That is the benefit the manager will actually feel, stated in a way that can be met.
+
+### Why #7 has a person in it
+
+Complaint handling is the one v1 job whose success cannot be asserted (§3). A perfectly-routed complaint with a curt acknowledgement passes every automated check and is a worse outcome than a slow human.
+
+**20 conversations a week, read by a person, forever.** Not a launch activity. It is roughly an hour a week and it is the only instrument that measures the thing most likely to cost the club a member.
+
+### What is deliberately not a metric
+
+- **Member satisfaction score.** No baseline exists, response rates on club surveys are low, and it would be measuring the club, not the agent.
+- **Cost per conversation.** Tracked operationally, but at ~7,300 interactions/year the model spend is not what makes this project succeed or fail.
+- **Time to first response.** Instant by construction. Measuring it flatters the agent and tells nobody anything.
+
+---
+
+*Sections 8–12 to follow.*
+
+
+
 
