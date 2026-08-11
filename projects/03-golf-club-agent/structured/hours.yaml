@@ -1,0 +1,24 @@
+# Opening hours. AUD/Sydney time.
+# NOTE: clubhouse and bar hours are owned by DIFFERENT people and have
+# historically disagreed. See knowledge/README.md.
+last_updated: 2026-06-15
+review_due: 2026-12-15
+
+pro_shop:
+  owner: Pro Shop Manager
+  monday_to_sunday: { open: "08:00", close: "16:30" }
+
+course:
+  owner: Pro Shop Manager
+  first_tee: "07:00"
+  last_tee_summer: "17:30"
+  last_tee_winter: "15:30"
+
+clubhouse:
+  owner: Club Secretary
+  monday_to_sunday: { open: "07:30", close: "22:30" }
+
+spike_bar:
+  owner: Bar Manager
+  monday_to_thursday: { open: "11:00", close: "22:00" }
+  friday_to_sunday:   { open: "11:00", close: "23:00" }

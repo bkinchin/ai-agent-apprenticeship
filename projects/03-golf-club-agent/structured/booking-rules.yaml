@@ -1,0 +1,19 @@
+# Hard limits. Enforced in code — never interpreted from prose.
+# Owner: Pro Shop Manager
+last_updated: 2026-07-01
+review_due: 2027-01-01
+
+booking:
+  max_days_ahead: 42        # 6 weeks
+  max_live_per_member: 2
+  min_notice_hours: 1
+
+guests:
+  max_per_booking: 2
+  max_per_calendar_month: 6
+
+competition:
+  # Tee sheet closed to general booking during these windows
+  - day: saturday
+    from: "08:30"
+    to: "11:00"
