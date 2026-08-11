@@ -25,7 +25,7 @@ Every `critical` case passed: all four adversarial, the policy gate, cross-accou
 
 ## Week-1 failure analysis
 
-Every defect found in seven days, categorised. The distribution is the point — it says where the weakness actually is.
+Every defect found in seven days, categorised. (#22 was found by the learner in `npm run chat` an hour after this was written — see below.) The distribution is the point — it says where the weakness actually is.
 
 | # | Day | Defect | Category | Found by |
 |---|---|---|---|---|
@@ -50,6 +50,7 @@ Every defect found in seven days, categorised. The distribution is the point —
 | 19 | 7 | Three advance sites, one of them incomplete | workflow | model swap |
 | 20 | 7 | *(self-inflicted)* decline recorded from a turn sent before the offer | policy | manual |
 | 21 | 7 | Turn budget encoded Opus's pacing into the test | harness | model swap |
+| 22 | 7 | "ok go on then" — an acceptance — recorded as a **decline** | wrong mechanism | **`npm run chat`** |
 
 ### Distribution
 
@@ -57,7 +58,7 @@ Every defect found in seven days, categorised. The distribution is the point —
 |---|---|---|
 | **Workflow / ordering** | 4 | The state machine is where the bugs live. State that changes mid-turn, read once at the wrong moment — three separate instances. |
 | **Harness** | 4 | The thing that measures needs the same rigour as the thing measured. It got it last. |
-| **Wrong mechanism** | 3 | Every one is a regex asked to judge *meaning*. Regexes for structure, classifiers for intent — learned three times. |
+| **Wrong mechanism** | 4 | Every one is a regex asked to judge *meaning*. Regexes for structure, classifiers for intent — learned three times. |
 | **Policy** | 3 | Including one I introduced *while fixing something else*. |
 | **Architecture** | 2 | Both are "a second path that skipped the gate". |
 | **Model limitation** | 2 | Real, but rare and easy to spot. |
@@ -70,7 +71,7 @@ Every defect found in seven days, categorised. The distribution is the point —
 
 | | Count | Which |
 |---|---|---|
-| A human reading output or thinking about the design | **13** | everything not listed below |
+| A human reading output or thinking about the design | **14** | everything not listed below |
 | The eval suite | 2 | #14, #18 |
 | Model swap | 2 | #19, #21 |
 | Unit test / grep | 2 | #1, #8 |
@@ -84,6 +85,26 @@ That is not an argument against tests. It's what they're *for*:
 > Unit tests are a ratchet, not a detector. They stop a known bug coming back. They don't find new ones.
 
 Both mechanisms are needed. Only one of them finds things.
+
+**Postscript, one hour later.** Defect #22 was found in the first
+conversation had after day 7 was declared finished: "ok go on then",
+answering *"would you like me to apply that?"*, was recorded as a
+DECLINE. It is the fourth instance of one root cause — a classifier
+answers its question in isolation, but a turn's meaning depends on what
+the agent just asked — patched locally three times before being named.
+
+It also exposed a coverage gap of my own making: eight realistic-
+variation cases, every one on the CANCEL path. The accept path had a
+single case phrased explicitly enough to dodge the bug entirely.
+
+Nothing was cancelled. The agent spotted the acceptance, found code had
+withdrawn `apply_retention`, refused to guess, and escalated with a
+summary flagging its own uncertainty. The safety architecture held; the
+code in front of it was wrong.
+
+The distinction to carry into week 2: **the agent is safe. It is not yet
+good.** Safety is enforced by construction. Quality is only ever
+discovered by looking.
 
 ---
 
