@@ -574,8 +574,151 @@ Complaint handling is the one v1 job whose success cannot be asserted (§3). A p
 
 ---
 
-*Sections 8–12 to follow.*
+## 8. Rollout
+
+Every gate is numeric. A stage cannot be exited on a judgement call.
+
+| Stage | Audience | Entry gate | Exit gate |
+|---|---|---|---|
+| **Internal** | Pro shop staff only, real tee sheet | Human baseline measured (§1) · all 16 structural anti-requirements have passing eval cases | 50 conversations · 0 policy violations · 0 double-bookings |
+| **Shadow** | Real member traffic, **agent output hidden** — staff answer as normal, agent runs alongside | Internal exit met | 200 conversations · agent's proposed action matches the staff action ≥ 90% · every mismatch reviewed |
+| **Limited** | Opt-in members, out-of-hours only | Shadow exit met · complaint review process staffed | 4 weeks · booking error < 1% · 0 charges without confirmation · escalation appropriateness ≥ 85% |
+| **Full** | All members, all hours | Limited exit met · Pro Shop Manager signs off | — |
+
+**Shadow mode is the stage most projects skip and the one that pays.** The agent handles real member messages and its output goes nowhere — staff answer as they always have. You get 200 real conversations, with a human's answer beside the agent's, at zero risk. It is the only chance to measure agreement against reality before anyone depends on it.
+
+**Limited runs out-of-hours first.** That is the highest-value, lowest-risk slice: the alternative to a wrong booking at 9pm is no booking at all, and no member is losing a service they already had.
+
+---
+
+## 9. Risks
+
+| Risk | Likelihood | Impact | Detection time | Mitigation | Owner |
+|---|---|---|---|---|---|
+| **Double-booking from a retried write** | High without mitigation | High — most visible failure a club has | Immediate (member arrives) | Append-only request log with client-generated IDs; agent never writes the sheet (§5) | Engineering |
+| **Staff edit the sheet while the agent is mid-booking** | **Certain** | High | Immediate | Single-threaded worker; agent holds nothing it has not confirmed | Engineering |
+| **Say/do divergence** — message says one slot, sheet holds another | Medium | High — hidden until arrival | Days, unless mitigated | Confirmation email generated from the record (§1) | Engineering |
+| **Charge incurred without confirmation** | Low with policy engine | High — money, and discovered on a statement | Weeks | Policy rule 5; write refused without a confirmation carrying the amount | Engineering |
+| **Curt complaint handling loses a member** | Medium | High — unrecoverable | Never, without sampling | 20 conversations/week read by a person (§7 #7) | Pro Shop Manager |
+| **PII in a Google Sheet** | **Certain — it is there today** | High | n/a | See §10. Predates this project; the agent increases access, not exposure | Membership Secretary |
+| **Members do not adopt it** | Medium | Project fails quietly | 8 weeks | Out-of-hours first, where the alternative is nothing | Pro Shop Manager |
+| **Accuracy target unmeetable because no baseline exists** | **High** | Targets become arbitrary | Now | Measure the baseline before agreeing any target (§1) | Pro Shop Manager |
+
+**The top two risks are both about a spreadsheet.** Neither is an AI risk, and both would exist for any automation touching this system.
+
+---
+
+## 10. Governance
+
+- **Accountable person:** Pro Shop Manager. Owns resolution when the agent gets it wrong. Named, not a team.
+- **Change approval:**
+  - *Prompt wording* → Pro Shop Manager
+  - *Policy rules* (limits, fees, guest allowances) → **Pro Shop Manager + Membership Secretary**, because these encode club rules that are not the agent's to change
+  - *Model version* → engineering, with a full eval run before and after, compared per job
+- **Audit retention:** every conversation, every tool call, every request-log entry — 12 months. The request log doubles as the audit trail (§5).
+- **Data protection:** membership data including names, contact details and payment history sits in a Google Sheet **today**. The agent does not create that exposure but it does widen access to it. **A DPIA is required before Limited**, and its scope is the Sheet, not the agent.
+- **Erasure:** a member requesting erasure must be removable from the Sheet, the request log, and conversation history. **Currently there is no procedure for the Sheet.** Open question in §12.
+- **AI transparency:** the agent identifies itself as automated in its first message, every conversation. Not buried in a footer.
+- **Vulnerable users:** a golf club membership skews older. Any member who asks for a person gets one, immediately, with no attempt to help first (§4 rule via escalation). Repeated confusion — the same question three times — escalates without being asked.
+
+---
+
+## 11. Out of scope
+
+| Not in v1 | Rationale |
+|---|---|
+| Payments of any kind | Explicit product decision. The agent creates liabilities; humans collect them. |
+| Membership renewal | Takes money. |
+| Explaining what a membership includes | Low checkability — a fluent wrong answer is undetectable and surfaces as a broken promise. |
+| Advice on membership tier | Unverifiable advice with a commercial interest attached. |
+| **Equipment advice** | **Never.** No fact settles whether the advice was good; no system of record; arguably the pro shop's job. |
+| **Billing disputes** | **Never.** Money plus emotion, and it reaches a human anyway. |
+| Resolving course complaints | Capture and route only. The agent never judges course condition. |
+| Competition entry or handicap changes | Different system, different owner, different failure mode. |
+| Anything on behalf of a member who is not the verified account holder | Structural (§4 rule 3). |
+
+**Two of these are permanent.** Equipment advice and billing disputes are "never", not "not yet" — a deliberate distinction that answers the question once instead of every quarter.
+
+---
+
+## 12. Open questions
+
+| Question | Owner | Needed by |
+|---|---|---|
+| **Migrate to a real tee-sheet system, or ship on the Sheet with a request log?** The largest feasibility decision in the project, and not an AI decision. | Pro Shop Manager + Engineering | Before Internal |
+| **What is the current human error rate?** Sample 100 bookings against confirmation corrections. Every accuracy target here is provisional until this exists. | Pro Shop Manager | Before Internal |
+| Erasure procedure for member data in the Google Sheet | Membership Secretary | Before Limited |
+| Who pages the Pro Shop Manager for a high-urgency out-of-hours escalation, and on what device? | Pro Shop Manager | Before Limited |
+| Is the competition calendar authoritative and current, or does the secretary keep a separate list? | Competition Secretary | Before Internal |
+| Does the club want the agent to identify individual staff in complaint routing, or route to the role? | Pro Shop Manager | Before Limited |
+| What happens to a booking request in the log if the worker is down overnight? | Engineering | Before Shadow |
 
 
 
 
+
+
+---
+
+## 13. The case against this project
+
+Per the day-8 exercise, this PRD was reviewed adversarially. Three objections were raised; two are answerable and one is not, on the terms this document originally set.
+
+### Objection 1 — the business case does not clear the bar
+
+20 interactions/day at ~4 minutes is 80 minutes of staff time. The measurable benefit is ~16% of one person's day plus unquantified out-of-hours demand. Against that: an agent, a policy engine, an eval harness, a request-log worker, a DPIA, an erasure procedure, model-change governance, and **an hour a week of manager time, forever**, for complaint review (§7 #7).
+
+**This is substantially correct**, and §7 already concedes the 16%. The counter is that the benefit is fragmentation, not duration — one interruption every 25 minutes is what prevents the manager doing anything else. Metrics #3 and #4 measure that instead.
+
+But it is a *thinner* case than "70–80% of my time back", and this document should not pretend otherwise.
+
+### Objection 2 — this is a transaction system built on a spreadsheet
+
+§5 proposes bolting idempotency, ordering, atomicity and an audit trail onto Google Sheets by hand, with its own failure modes (§12). That work exists only because the system of record is unsuitable for an autonomous writer.
+
+**Also correct**, and §12 already carries it as the largest open question. It is not a reason to reject the project; it is a reason to answer that question *first*.
+
+### Objection 3 — a booking form solves the stated problem, and this does not beat it
+
+**This is the strongest objection and it is not answerable on booking alone.**
+
+> A tee-sheet system with online booking costs roughly £1,500/year, has an API and idempotency, and solves out-of-hours booking **completely** — with no accuracy risk, no DPIA, no eval harness and no weekly review.
+
+The primary stated benefit of this project is "take bookings out of hours". A form does that at 100%. An agent does it at 99%.
+
+**Nothing in sections 1–12 establishes that conversation is necessary. It was assumed.**
+
+### The response
+
+Not a rebuttal — a change to the plan.
+
+**1. The club should buy online booking regardless of this project.** It is cheaper, it is more reliable at the single highest-volume job, and it removes the largest technical risk in §5 by replacing the system of record. Recommending it is the honest output of this analysis even though it reduces the scope of the agent.
+
+**2. That done, the agent's case rests on the jobs a form cannot do** — which is a narrower and more defensible claim:
+
+| | Form | Agent |
+|---|---|---|
+| Book a known slot | ✓ **Better** | ✓ |
+| *"Something Saturday morning, four of us, one's a guest"* | ✗ | ✓ |
+| Guest allowance — how many left, what it costs, applied correctly | Partially | ✓ |
+| Report a course problem and feel heard | ✗ | ✓ |
+| A member who will not use a portal | ✗ | ✓ |
+
+That last row is not a small point. §10 records that the membership skews older; a club whose members phone rather than click will get a form nobody uses.
+
+**3. The order of work therefore changes:**
+
+| | |
+|---|---|
+| **First** | Online booking. Measure whether out-of-hours demand is real — the number §1 flags as unmeasurable today. |
+| **Then** | Decide whether the remaining jobs justify an agent, with a real demand number instead of an assumption. |
+
+**4. If the club will not buy online booking**, the agent's case is stronger — it becomes the only route to out-of-hours booking — but the §5 risks are then unmitigated by anything except the request log, and the open question in §12 becomes a blocker rather than a decision.
+
+### What this changes in the document
+
+- The recommendation is no longer "build the agent". It is **"buy online booking, measure the demand, then decide"**.
+- The agent's justification shifts from *volume* to *the jobs a form cannot do*, which is a smaller and more honest claim.
+- §7 #1 (out-of-hours bookings) stops being this project's success metric and becomes the **input to the decision about whether this project happens at all**.
+
+> A PRD whose own arithmetic argues against it is more useful than one that does not, because the objection was going to be raised in the meeting either way. Better it appears here, answered, than there, unanswered.
