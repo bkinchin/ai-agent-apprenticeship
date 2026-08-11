@@ -566,6 +566,20 @@ Complaint handling is the one v1 job whose success cannot be asserted (§3). A p
 
 **20 conversations a week, read by a person, forever.** Not a launch activity. It is roughly an hour a week and it is the only instrument that measures the thing most likely to cost the club a member.
 
+### Known gap in the containment pairing
+
+Metric #5 (containment) is paired with #6 (escalation appropriateness) so it cannot be gamed. **That pairing only works in one direction.**
+
+> An agent that resolves 100% of conversations by refusing everything and never escalating has perfect containment.
+
+#6 samples the conversations that *were* escalated and asks whether they needed a person. That catches **over**-escalation — handing off work it could have done.
+
+It does not catch **under**-escalation, which is the gameable direction: a conversation the agent should have passed to a human and quietly handled instead scores well on both metrics. The member is left with a wrong answer and nobody knows.
+
+Catching that requires sampling **contained** conversations, not escalated ones — a second review stream asking *"should this have gone to a person?"*
+
+Not currently costed or staffed. Recorded here rather than silently added, because it changes the review budget in #7 and the club should decide whether to pay for it.
+
 ### What is deliberately not a metric
 
 - **Member satisfaction score.** No baseline exists, response rates on club surveys are low, and it would be measuring the club, not the agent.
