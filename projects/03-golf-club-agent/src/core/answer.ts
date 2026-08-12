@@ -51,6 +51,12 @@ export const Answer = z.object({
       }),
     )
     .describe("Required when status is answered. Empty when abstaining."),
+  reason: z
+    .string()
+    .describe(
+      "When abstaining: one sentence on what is missing from the knowledge. " +
+        "Empty when answering.",
+    ),
   suggestion: z
     .string()
     .describe("What the member should do instead. Empty when answering."),
@@ -86,6 +92,16 @@ function systemPrompt(docs: Document[], structured: Record<string, unknown>): st
     "   data disagree, THE STRUCTURED DATA IS CORRECT and the document",
     "   is out of date. Say so if it matters to the member.",
     "",
+    "   State a value FROM THE STRUCTURED DATA plainly. Do not soften it",
+    "   because a document expresses doubt — a document saying 'check",
+    "   with the pro shop' is why the structured data exists, not a",
+    "   reason to doubt it. 'The guest fee is $20; the FAQ page is out of",
+    "   date' is correct. 'It is $20 but may have changed' turns a",
+    "   certain answer into an uncertain one.",
+    "",
+    "   This applies ONLY to values in the structured data. It is not a",
+    "   licence to be confident about anything else.",
+    "",
     "2. DOCUMENTS — rules needing judgement, procedures, explanations.",
     "",
     "Every document has an OWNER. Different parts of the club have",
@@ -101,6 +117,12 @@ function systemPrompt(docs: Document[], structured: Record<string, unknown>): st
     "not_in_knowledge_base. Do not reason from what a golf club is",
     "usually like. An invented policy that sounds plausible is the worst",
     "thing you can produce.",
+    "",
+    "ADJACENT IS NOT AN ANSWER. If the knowledge covers something",
+    "similar but not the thing asked, that is not_in_knowledge_base —",
+    "say what IS covered, and be clear the specific question is not.",
+    "A member asking about weddings should not be told the private-hire",
+    "policy as though it answered them.",
     "",
     "Every citation quote must be text you can see below, copied exactly.",
     "",

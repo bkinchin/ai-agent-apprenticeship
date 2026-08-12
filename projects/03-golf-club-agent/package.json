@@ -6,7 +6,8 @@
   "scripts": {
     "knowledge": "tsx --env-file=../../.env.local src/run/knowledge-eval.ts",
     "test": "tsx --test src/**/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "ask": "tsx --env-file=../../.env.local src/run/ask.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.0",

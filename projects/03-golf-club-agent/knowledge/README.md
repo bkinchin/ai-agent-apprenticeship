@@ -40,11 +40,27 @@ Every document therefore carries an `owner` in its front matter, so the agent ca
 Measured 2026-08-10, `claude-haiku-4-5`, whole corpus in the system prompt, structured data exposed alongside it as authoritative.
 
 ```
-accuracy         19/20  (95%)  worst of three runs — 20, 19, 19
-invention rate   0/15          across all three runs
+accuracy         20/20  (100%)  three consecutive runs
+invention rate   0/15           across all three runs
 bad citations    0
 cost             $0.0079 per question  (~7.2k input tokens)
 ```
+
+Reached in three steps, and the middle one is the interesting part.
+
+| | Accuracy | Invention |
+|---|---|---|
+| First measurement | 19/20 worst of 3 | 0/15 |
+| After "state authoritative values plainly" | 17–18/20 | **1/5, three runs running** |
+| After scoping that instruction precisely | **20/20 × 3** | **0/15** |
+
+**Manual use found a fault the eval could not.** Asked the guest fee, the agent gave the authoritative $20 and then added *"may have changed, check with the pro shop"* — because `faq.md` says so. It had a certain answer and made it sound uncertain. No assertion in the suite catches that; it looks like a pass.
+
+**Fixing it caused a regression, measured.** Told to state values plainly, the model generalised to confidence in general and began answering *"can I hire the clubhouse for a wedding?"* with the private-hire policy. Consistent across three runs, always the same question — which is what made it diagnosable rather than dismissable as noise.
+
+The fix was precision, not reversal: scope the confidence instruction to structured values only, and add an explicit rule that **adjacent is not an answer**.
+
+> A prompt change is not local. The only way to know what else it moved is to measure.
 
 **Invention rate is the number that matters.** Fifteen opportunities to answer a question the corpus cannot answer — dogs, weddings, an electric-bike charger, a visitor green fee that exists one file away — and it declined every time. That is the whole reason the `not_in_knowledge_base` branch exists.
 
