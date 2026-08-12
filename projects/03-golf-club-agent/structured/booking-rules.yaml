@@ -1,19 +1,36 @@
 # Hard limits. Enforced in code — never interpreted from prose.
-# Owner: Pro Shop Manager
+#
+# MEANING GOES IN THE DATA, NOT IN COMMENTS. The parser drops comments,
+# so anything explained here is invisible to the model. This file
+# previously said "# Tee sheet closed to general booking during these
+# windows" above a `competition` key, and the model — seeing only
+# {"day":"saturday","from":"08:30","to":"11:00"} — could not tell
+# whether that was when competitions happen or when booking is shut.
+# It preferred a stale document that spelled it out.
+owner: Pro Shop Manager
 last_updated: 2026-07-01
 review_due: 2027-01-01
 
 booking:
-  max_days_ahead: 42        # 6 weeks
+  meaning: "Limits on how and when a member may book a tee time."
+  max_days_ahead: 42
+  max_days_ahead_plain: "6 weeks"
   max_live_per_member: 2
   min_notice_hours: 1
 
 guests:
+  meaning: "How many guests a member may sign in. Fees are in fees.yaml."
   max_per_booking: 2
   max_per_calendar_month: 6
 
-competition:
-  # Tee sheet closed to general booking during these windows
-  - day: saturday
-    from: "08:30"
-    to: "11:00"
+tee_sheet_closures:
+  meaning: >
+    General booking is NOT AVAILABLE during these windows. They recur
+    every week unless stated otherwise. This is the authoritative
+    schedule; any document giving different days or times is out of date.
+  windows:
+    - day: saturday
+      from: "08:30"
+      to: "11:00"
+      recurrence: "every saturday"
+      reason: "Club competition"

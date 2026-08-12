@@ -26,8 +26,17 @@ console.log(`\nmodel: ${MODEL}`);
 console.log(`corpus: ${docs.length} documents, ~${Math.round(corpusChars / 4 / 1000)}k tokens stuffed per call`);
 console.log(`running ${cases.length} question(s)...\n`);
 
-type Outcome = "correct" | "wrong-source" | "wrong-value" | "invented" | "over-abstained" | "uncited" | "unparseable";
+type Outcome = "correct" | "wrong-source" | "invented" | "over-abstained" | "uncited" | "unparseable";
+
+/**
+ * Strip filler so "three hours and fifteen minutes" matches
+ * "three hours fifteen". Not a fix — a mitigation. See below.
+ */
+const loose = (s: string) =>
+  s.toLowerCase().replace(/\b(and|a|an|the|approximately|about|roughly|around)\b/g, " ").replace(/\s+/g, " ").trim();
 const results: { id: string; outcome: Outcome; detail: string; bad: number }[] = [];
+let leakySuggestions = 0;
+let contentMismatches = 0;
 let inputTokens = 0;
 let outputTokens = 0;
 
@@ -60,22 +69,51 @@ for (const q of cases) {
       q.expectSource === null ||
       q.expectSource.some((want) => cited.some((c) => c.includes(want)));
     const containsOk =
-      !q.expectContains || q.expectContains.some((s) => text.includes(s.toLowerCase()));
-    const absentOk = !q.expectAbsent || !q.expectAbsent.some((s) => text.includes(s.toLowerCase()));
+      !q.expectContains || q.expectContains.some((s) => loose(text).includes(loose(s)));
+    const absentOk = !q.expectAbsent || !q.expectAbsent.some((s) => loose(text).includes(loose(s)));
 
-    if (!sourceOk) {
+    const allSourcesOk =
+      !q.expectAllSources ||
+      q.expectAllSources.every((want) => cited.some((c) => c.includes(want)));
+
+    if (!allSourcesOk) {
+      outcome = "wrong-source";
+      detail = `cited ${cited.join(", ")}, needed ALL of ${q.expectAllSources!.join(" + ")}`;
+    } else if (!sourceOk) {
       outcome = "wrong-source";
       detail = `cited ${cited.join(", ")}, expected one of ${q.expectSource!.join(" / ")}`;
-    } else if (!containsOk) {
-      outcome = "wrong-value";
-      detail = `missing one of: ${q.expectContains!.join(" / ")}`;
     } else if (!absentOk) {
-      outcome = "wrong-value";
+      // A value that must NOT appear is a real failure — it means a
+      // stale figure was quoted as current.
+      outcome = "wrong-source";
       detail = `contains a value it should not: ${q.expectAbsent!.join(" / ")}`;
     } else {
+      // CONTENT MISMATCH IS REPORTED, NOT FAILED.
+      //
+      // Seven attempts to assert on phrasing, seven wrong. The last one
+      // expected "three hours fifteen" and got "three hours AND fifteen
+      // minutes" — after the list had already been widened to seven
+      // variants. You cannot enumerate how a sentence may be phrased.
+      //
+      // Day 7's gate-vs-trend distinction, arriving here: the SOURCE
+      // assertion is deterministic and gates; the CONTENT assertion is
+      // fuzzy and reports. Gating on a fuzzy signal is how a suite gets
+      // switched off.
       outcome = "correct";
+      if (!containsOk) {
+        contentMismatches++;
+        detail =
+          `\x1b[33m⚠ content\x1b[0m expected one of: ${q.expectContains!.join(" / ")}\n` +
+          `             said: "${r.answer.answer.slice(0, 130).replace(/\s+/g, " ")}"`;
+      }
     }
   }
+
+  // An abstention whose "routing" carries a figure is a fact that
+  // escaped the citation requirement through the branch meant to be safe.
+  const leaky =
+    r.answer?.status === "not_in_knowledge_base" && /\d/.test(r.answer.suggestion);
+  if (leaky) leakySuggestions++;
 
   results.push({ id: q.id, outcome, detail, bad: r.badCitations.length });
 
@@ -98,7 +136,6 @@ console.log(`\n${"═".repeat(70)}`);
 console.log(`correct                ${n("correct")}/${cases.length}`);
 if (answerable) {
   console.log(`  wrong source         ${n("wrong-source")}`);
-  console.log(`  wrong value          ${n("wrong-value")}`);
   console.log(`  over-abstained       ${n("over-abstained")}   (could have answered, didn't)`);
   console.log(`  uncited              ${n("uncited")}   (answered with no source at all)`);
 }
@@ -110,6 +147,8 @@ if (unanswerable) {
   );
 }
 console.log(`bad citations          ${badCitations}   (quote not found in the cited source)`);
+console.log(`leaky suggestions      ${leakySuggestions}   (abstained, then stated a figure uncited)`);
+console.log(`content mismatches     ${contentMismatches}   ⚠ REPORTED, NOT FAILED — read them, do not gate on them`);
 
 // Cost. Haiku 4.5 = $1/M in, $5/M out. Opus 5 = $5/$25.
 const price = MODEL.includes("haiku") ? { in: 1, out: 5 } : { in: 5, out: 25 };

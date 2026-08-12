@@ -1,24 +1,33 @@
-# Opening hours. AUD/Sydney time.
-# NOTE: clubhouse and bar hours are owned by DIFFERENT people and have
-# historically disagreed. See knowledge/README.md.
+# Opening hours, Australia/Sydney.
+#
+# Different parts of the club are owned by different people and their
+# hours genuinely differ. That is not a contradiction — it is
+# jurisdiction. Each block names its owner so the agent can say who
+# decides rather than guessing.
 last_updated: 2026-06-15
 review_due: 2026-12-15
 
 pro_shop:
+  meaning: "When the pro shop is staffed. Bookings by phone are taken in these hours."
   owner: Pro Shop Manager
   monday_to_sunday: { open: "08:00", close: "16:30" }
 
 course:
+  meaning: "First and last tee times available."
   owner: Pro Shop Manager
   first_tee: "07:00"
   last_tee_summer: "17:30"
   last_tee_winter: "15:30"
 
 clubhouse:
+  meaning: "When the clubhouse building is open. The BAR has its own hours below."
   owner: Club Secretary
   monday_to_sunday: { open: "07:30", close: "22:30" }
 
 spike_bar:
+  meaning: >
+    Bar service hours. These are set by the Bar Manager and are
+    deliberately different from the clubhouse hours above.
   owner: Bar Manager
   monday_to_thursday: { open: "11:00", close: "22:00" }
   friday_to_sunday:   { open: "11:00", close: "23:00" }

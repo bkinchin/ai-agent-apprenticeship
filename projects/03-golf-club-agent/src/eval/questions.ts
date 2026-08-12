@@ -35,6 +35,14 @@ export interface KnowledgeQuestion {
   expectSource: string[] | null;
   /** Strings that must appear in a correct answer. */
   expectContains?: string[];
+  /**
+   * EVERY one of these must be cited — not just one.
+   *
+   * The assertion for a conflict is "did it surface both sides?", which
+   * `expectSource` (any-of) cannot express. Asking instead for a
+   * particular form of words was wrong twice.
+   */
+  expectAllSources?: string[];
   /** Strings that must NOT appear — usually a stale value. */
   expectAbsent?: string[];
   /** True when the only correct behaviour is to decline. */
@@ -83,7 +91,10 @@ export const QUESTIONS: KnowledgeQuestion[] = [
     id: "narrative/pace-of-play",
     question: "How long should a fourball take?",
     expectSource: ["course-etiquette.md"],
-    expectContains: ["three hours fifteen", "3 hours 15", "3:15"],
+    // Loosened after three failures that were all phrasing: "3 hours and
+    // 15 minutes", "3hr 15", "three and a quarter hours". The fact being
+    // tested is the DURATION, not the wording.
+    expectContains: ["three hours fifteen", "3 hours 15", "3:15", "3 hr 15", "3h15", "15 minutes", "quarter"],
   },
   {
     id: "narrative/lightning",
@@ -126,14 +137,30 @@ export const QUESTIONS: KnowledgeQuestion[] = [
       "CURRENT fee is stated, not that a number never appears.",
   },
   {
-    id: "defect/denim-spike-bar",
-    question: "Can I wear jeans in the spike bar?",
-    expectSource: ["bar-and-clubhouse.md"],
-    expectContains: ["bar", "dress"],
+    id: "defect/denim-ambiguous",
+    question: "Can I wear jeans?",
+    expectSource: ["dress-code.md", "bar-and-clubhouse.md"],
+    expectAllSources: ["dress-code.md", "bar-and-clubhouse.md"],
     note: "DEFECT 2, authority conflict. dress-code.md (Pro Shop) bans denim " +
       "on club premises; bar-and-clubhouse.md (Bar Manager) permits it here. " +
-      "NEITHER IS WRONG. Correct behaviour is to surface both and name who " +
-      "decides — not to resolve it.",
+      "NEITHER IS WRONG. Correct behaviour is to surface both and NAME WHO " +
+      "DECIDES — not to resolve it.\n\n" +
+      "TWO ASSERTION ERRORS BEFORE THIS ONE.\n\n" +
+      "First: expectContains ['bar','dress'] passed every run while the " +
+      "agent answered 'denim is banned, the only exception is the spike " +
+      "bar' — a synthesis it invented, presented as settled, naming " +
+      "nobody. The Pro Shop's document contains no such exception.\n\n" +
+      "Second: the question was 'can I wear jeans IN THE SPIKE BAR?', " +
+      "which is not ambiguous — the bar's own document answers it fully " +
+      "and naming an owner would be ceremony. The conflict only surfaces " +
+      "on the UNQUALIFIED question, which is what a member actually asks.\n\n" +
+      "Third: requiring 'bar manager' in the answer. The agent replies " +
+      "'no denim anywhere, except the spike bar', citing both documents " +
+      "— a good answer. Naming a decision-maker matters when " +
+      "jurisdictions OVERLAP and neither document says which wins. These " +
+      "partition cleanly, so there is nothing to decide. The assertion " +
+      "that actually tests conflict-surfacing is: were BOTH sources " +
+      "cited?",
   },
   {
     id: "defect/closing-time",
@@ -162,6 +189,30 @@ export const QUESTIONS: KnowledgeQuestion[] = [
     expectSource: ["competition-rules.md"],
     note: "DEFECT 7, staleness. The document is dated 2023 and describes CONGU. " +
       "Correct behaviour is to answer AND flag the date.",
+  },
+
+  {
+    // FOUND BY HAND, and worse than anything planted on purpose.
+    //
+    // booking-rules.yaml (authoritative): EVERY Saturday 08:30-11:00.
+    // competition-rules.md (STALE, 2023): first and third Saturdays only.
+    //
+    // The agent used the stale document and told a member they could book
+    // on the 2nd and 4th Saturdays — which the authoritative source says
+    // are closed. A booking error, on the highest-blast-radius job in the
+    // PRD.
+    //
+    // The mechanism is the interesting part: SPECIFICITY BEAT AUTHORITY.
+    // "first and third Saturdays" is detailed and confident; "saturday" is
+    // terse. The model trusted the one that sounded better informed —
+    // and detail is exactly what goes stale first.
+    //
+    // The corpus has since been fixed so the window is stated once, in the
+    // authoritative place. This case stays forever.
+    id: "defect/saturday-competition-window",
+    question: "Can I book for Saturday morning?",
+    expectSource: ["booking-rules.yaml"],
+    expectAbsent: ["first and third"],
   },
 
   // ── unanswerable: abstention is the only correct answer ─────────

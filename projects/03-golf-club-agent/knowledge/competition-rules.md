@@ -36,11 +36,11 @@ The Club Championship is played over 36 holes on a single day in July, scratch, 
 
 Distance measuring devices are not permitted.
 
-The tee sheet for the Championship is closed to general booking from 07:00 to 15:00.
+The tee sheet for the Championship is closed to general booking for the day; the exact window is held in the booking rules.
 
 ## Saturday medals
 
-The Saturday medal is played on the first and third Saturdays of each month between 08:30 and 11:00. The tee sheet is closed to general booking during this window.
+The Saturday medal is played on competition Saturdays. **The competition window and which Saturdays it applies to are held in the club's booking rules, not here** — this document describes the format, not the schedule.
 
 Cards must be signed by the marker and returned to the box in the pro shop within thirty minutes of finishing. A card returned late may be disqualified at the Competition Secretary's discretion.
 

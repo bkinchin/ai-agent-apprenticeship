@@ -30,7 +30,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import { loadStructured, stuffAll, type Document } from "./corpus.js";
+import { isStale, stuffAll, type Document } from "./corpus.js";
 
 const client = new Anthropic();
 export const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5";
@@ -57,17 +57,40 @@ export const Answer = z.object({
       "When abstaining: one sentence on what is missing from the knowledge. " +
         "Empty when answering.",
     ),
+  contact: z
+    .enum([
+      "pro_shop",
+      "club_secretary",
+      "bar_manager",
+      "competition_secretary",
+      "handicap_secretary",
+      "none",
+    ])
+    .describe("Who the member should ask. 'none' when answering."),
   suggestion: z
     .string()
-    .describe("What the member should do instead. Empty when answering."),
+    .describe(
+      "ROUTING ONLY — who to ask and what to ask them. Never information. " +
+        "Empty when answering.",
+    ),
 });
 
 export type Answer = z.infer<typeof Answer>;
 
+/**
+ * Which cited sources are past their review date.
+ *
+ * The system prompt asks the model to mention staleness. It did not —
+ * it answered a booking question from a document three years overdue
+ * and said nothing. Asking a model to remember something is a request;
+ * this is the guarantee.
+ */
 export interface AskResult {
   answer: Answer | null;
   /** Citations whose quote could NOT be found in the cited source. */
   badCitations: { source: string; quote: string; why: string }[];
+  /** Cited documents past their review date. Code appends the warning. */
+  staleSources: { id: string; reviewDue: string }[];
   /**
    * The model answered but cited nothing.
    *
@@ -102,16 +125,42 @@ function systemPrompt(docs: Document[], structured: Record<string, unknown>): st
     "   This applies ONLY to values in the structured data. It is not a",
     "   licence to be confident about anything else.",
     "",
+    "   SPECIFICITY IS NOT AUTHORITY. A document giving more detail than",
+    "   the structured data has not overridden it — it is more likely to",
+    "   be out of date, because detail is what goes stale first. Where a",
+    "   document's detail contradicts a structured value, the structured",
+    "   value wins and the extra detail is suspect.",
+    "",
     "2. DOCUMENTS — rules needing judgement, procedures, explanations.",
     "",
     "Every document has an OWNER. Different parts of the club have",
     "genuine authority over different things: the pro shop owns the",
-    "course, the bar manager owns the bar. When two documents disagree",
-    "and both owners have a legitimate claim, DO NOT PICK ONE. Say what",
-    "each says and name who decides.",
+    "course, the bar manager owns the bar.",
+    "",
+    "When two documents from DIFFERENT OWNERS disagree, you must do all",
+    "three of these, and the third is the one that gets forgotten:",
+    "",
+    "  1. Say what each document says",
+    "  2. Say which applies where",
+    "  3. NAME THE OWNER who decides the disputed case",
+    "",
+    "Do not reconcile them into a single settled rule of your own. 'Denim",
+    "is banned except in the spike bar' sounds authoritative and is a",
+    "synthesis you invented — the pro shop's document contains no such",
+    "exception. 'The pro shop bans denim across the club; the spike bar",
+    "sets its own standard and permits it — the Bar Manager decides for",
+    "that room' is what the club can actually stand behind.",
     "",
     "A document marked STALE is past its review date. You may still use",
     "it — say that it may be out of date.",
+    "",
+    "WHEN YOU DECLINE, the suggestion field is ROUTING, NOT AN ANSWER.",
+    "Say who to ask and what to ask them. Do NOT put facts there. The",
+    "citation requirement applies to answers; anything you write in the",
+    "suggestion carries no source, so a fact placed there is an unsourced",
+    "claim wearing a helpful hat. 'Ask the Bar Manager about private hire'",
+    "is right. 'The dining room and lounge can be hired' is an answer, and",
+    "belongs in an answer with a citation or nowhere.",
     "",
     "If the knowledge does not answer the question, return",
     "not_in_knowledge_base. Do not reason from what a golf club is",
@@ -227,6 +276,13 @@ export async function ask(
   return {
     answer,
     badCitations: answer ? verifyCitations(answer, docs, structured) : [],
+    staleSources:
+      answer?.status === "answered"
+        ? answer.citations
+            .map((c) => docs.find((d) => d.id === c.source))
+            .filter((d): d is Document => d !== undefined && isStale(d))
+            .map((d) => ({ id: d.id, reviewDue: d.reviewDue }))
+        : [],
     uncited: answer?.status === "answered" && answer.citations.length === 0,
     usage: {
       input: response.usage.input_tokens,

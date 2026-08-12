@@ -78,7 +78,13 @@ for (;;) {
   if (r.answer.status === "not_in_knowledge_base") {
     // Not an error. This is the branch working.
     console.log(`\n\x1b[33m[declined]\x1b[0m ${r.answer.reason}`);
-    console.log(`           ${r.answer.suggestion}\n`);
+    console.log(`           → ${r.answer.contact.replace(/_/g, " ")}: ${r.answer.suggestion}`);
+    // A routing instruction carrying numbers is usually a fact that
+    // escaped the citation requirement through the abstention branch.
+    if (/\d/.test(r.answer.suggestion)) {
+      console.log(`  \x1b[31m⚑ suggestion contains a figure — uncited\x1b[0m`);
+    }
+    console.log("");
   } else {
     console.log(`\n${r.answer.answer}\n`);
     for (const c of r.answer.citations) {
@@ -89,6 +95,11 @@ for (;;) {
     }
     // An unsourced claim about a club is the failure this exists to stop.
     if (r.uncited) console.log("  \x1b[31m⚑ ANSWERED WITH NO CITATION\x1b[0m");
+    for (const st of r.staleSources) {
+      console.log(
+        `  \x1b[33m⚑ ${st.id} was due for review ${st.reviewDue} — this answer may be out of date\x1b[0m`,
+      );
+    }
     for (const b of r.badCitations) {
       console.log(`  \x1b[31m⚑ bad citation — ${b.source}: ${b.why}\x1b[0m`);
     }

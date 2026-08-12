@@ -73,3 +73,93 @@ That is the fourth time on this project that a failing case turned out to be a b
 > The **source** assertion is robust. The **content** assertion is brittle.
 
 Deterministic checking on generated text works well for *where it came from* and poorly for *what it said*. Cite-checking is the load-bearing assertion here; string matching on the answer is a smoke test.
+
+
+---
+
+## Four defects found by one manual session
+
+The eval was passing 20/20, three runs running, when a person sat down and typed at the agent. It found four things the suite could not see.
+
+### 1. A stale document beat the authoritative data — on a booking rule
+
+```
+booking-rules.yaml   (authoritative)  every Saturday 08:30-11:00
+competition-rules.md (STALE, 2023)    first and third Saturdays only
+```
+
+The agent used the stale document and told a member the 2nd and 4th Saturdays were bookable. They are not. **This is a booking error on the highest-blast-radius job in the PRD**, and it is the exact failure the structured/unstructured split exists to prevent.
+
+The mechanism is the interesting part:
+
+> **Specificity beat authority.** "First and third Saturdays" is detailed and confident. "saturday" is terse. The model trusted the one that sounded better informed — and detail is precisely what goes stale first.
+
+Fixed at the corpus, not the prompt: the window is now stated **once**, in the authoritative place. The principle that decided it — *eliminate conflicts where the blast radius is high; keep them where you want to test judgement.* A wrong guest fee is a conversation. A wrong booking rule is a member driving to a closed tee sheet.
+
+### 2. YAML comments are invisible to the model
+
+The file said:
+
+```yaml
+competition:
+  # Tee sheet closed to general booking during these windows
+  - day: saturday
+```
+
+The parser drops comments. The model saw `{"day":"saturday","from":"08:30","to":"11:00"}` and could not tell whether that was when competitions *happen* or when booking is *shut*.
+
+**Documentation written for a human reading the file is not read by the model, which sees the parsed file.** Every YAML now carries its meaning *in the data* — a `meaning:` key rather than a `#` comment.
+
+This was systemic: `fees.yaml` explained that the guest fee was "per guest, per round" and had been raised from 15, in comments. Both invisible.
+
+### 3. The `suggestion` field was an uncited escape hatch
+
+Citations are required on `answer`. Nothing was required on `suggestion` — so an abstention could still deliver facts, unsourced and unverified, through the branch designed to be the safe one.
+
+Now constrained to routing (*who* to ask and *what* to ask them), with a `contact` enum, and the eval flags any suggestion containing a figure.
+
+### 4. Staleness never reached the member
+
+The prompt asked the model to mention that a source was overdue for review. It did not — it answered a booking question from a 2023 document and said nothing.
+
+Moved to code: the cited sources are checked against their review dates and the warning is appended by the runner. **Asking a model to remember something is a request; computing it is a guarantee.**
+
+---
+
+## Seven assertion errors, and what they mean
+
+Across day 9 the eval was wrong about the agent **seven times**:
+
+| # | The assertion | Why it was wrong |
+|---|---|---|
+| 1 | `expectAbsent: ["15"]` on the guest fee | Failed the *best* answer ("$20; the handbook says $15 and is stale") as well as the worst |
+| 2 | Bar hours must cite `bar-and-clubhouse.md` | `hours.yaml` is authoritative and citing it is better |
+| 3 | Live bookings must cite `booking-rules.yaml` | The FAQ legitimately restates the rule |
+| 4 | Denim question asked "in the spike bar" | Too specific — the conflict only surfaces on the unqualified question |
+| 5 | Denim answer must say "bar manager" | The jurisdictions partition cleanly; there is nothing to decide |
+| 6–7 | Pace of play must contain one of *n* phrasings | Widened to seven variants, still missed "three hours **and** fifteen minutes" |
+
+The last one is the conclusion, not the anecdote:
+
+> **You cannot enumerate the ways a sentence can be phrased.** Seven attempts, on a single fact with one correct value.
+
+So the harness now splits its assertions the way day 7 split judging:
+
+| Assertion | Deterministic? | Treatment |
+|---|---|---|
+| Cited the right source | yes | **gate** |
+| Abstained when it should | yes | **gate** |
+| Citation quote verifies | yes | **gate** |
+| Quoted a value it should not | yes | **gate** |
+| Answer contains a phrase | **no — 7/7 wrong** | **report** |
+
+Gating on a fuzzy signal is how a suite gets switched off. Reporting it keeps the information without letting it lie.
+
+## Baseline after the fixes
+
+```
+accuracy         20/21  worst of three runs — 20, 21, 20
+invention rate   0/15   across all three runs
+bad citations    0-1
+cost             $0.0086 per question
+```

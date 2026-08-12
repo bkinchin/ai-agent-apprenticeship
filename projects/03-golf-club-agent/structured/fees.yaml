@@ -1,9 +1,10 @@
 # Fees. AUD. The single source of truth — prose documents may lag.
-# Owner: Club Secretary (membership) / Pro Shop Manager (playing fees)
+owner: Club Secretary (membership) / Pro Shop Manager (playing fees)
 last_updated: 2026-07-01
 review_due: 2027-07-01
 
 membership:
+  meaning: "Annual subscription and joining fee by category, in AUD."
   full:      { annual: 2400, joining: 500, guests_per_month: 6 }
   country:   { annual: 1450, joining: 500, guests_per_month: 4 }
   midweek:   { annual: 1100, joining: 300, guests_per_month: 4 }
@@ -11,13 +12,21 @@ membership:
   social:    { annual: 180,  joining: 0,   guests_per_month: 0 }
 
 guest:
-  green_fee: 20          # per guest, per round
-  # NOTE: raised from 15 on 2026-04-01. Some prose still says 15.
+  meaning: >
+    Charged to the sponsoring member's account, per guest, per round.
+    Raised from 15 on 2026-04-01 — some documents still say 15 and are
+    out of date.
+  green_fee: 20
+  currency: AUD
 
 cancellation:
+  meaning: >
+    Cancelling more than 24 hours before the tee time is free. Inside
+    24 hours a late fee applies.
   free_before_hours: 24
   late_fee: 15
 
 buggy:
+  meaning: "Buggy hire, per round."
   hire: 35
   members_discount: 5
