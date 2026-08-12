@@ -32,3 +32,28 @@ They are not contradictions. **Neither document is wrong.** The bar manager and 
 That is what real organisations look like, and an agent that resolves it silently is confidently answering a question nobody at the club has actually settled.
 
 Every document therefore carries an `owner` in its front matter, so the agent can name who decides instead of guessing.
+
+---
+
+## Baseline: prompt stuffing
+
+Measured 2026-08-10, `claude-haiku-4-5`, whole corpus in the system prompt, structured data exposed alongside it as authoritative.
+
+```
+accuracy         19/20  (95%)  worst of three runs — 20, 19, 19
+invention rate   0/15          across all three runs
+bad citations    0
+cost             $0.0079 per question  (~7.2k input tokens)
+```
+
+**Invention rate is the number that matters.** Fifteen opportunities to answer a question the corpus cannot answer — dogs, weddings, an electric-bike charger, a visitor green fee that exists one file away — and it declined every time. That is the whole reason the `not_in_knowledge_base` branch exists.
+
+### Both failures were the test, not the agent
+
+Across three runs the two misses were: citing `faq.md` for a rule the FAQ genuinely restates, and phrasing "three hours fifteen" in a way my string list did not anticipate.
+
+That is the fourth time on this project that a failing case turned out to be a brittle assertion. Worth stating as a property rather than fixing a fifth time:
+
+> The **source** assertion is robust. The **content** assertion is brittle.
+
+Deterministic checking on generated text works well for *where it came from* and poorly for *what it said*. Cite-checking is the load-bearing assertion here; string matching on the answer is a smoke test.
