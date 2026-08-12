@@ -7,7 +7,9 @@
     "knowledge": "tsx --env-file=../../.env.local src/run/knowledge-eval.ts",
     "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "ask": "tsx --env-file=../../.env.local src/run/ask.ts"
+    "ask": "tsx --env-file=../../.env.local src/run/ask.ts",
+    "tee-sheet": "tsx tee-sheet/server.ts",
+    "reliability": "tsx src/run/reliability.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.0",

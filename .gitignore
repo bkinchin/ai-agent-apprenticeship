@@ -35,3 +35,6 @@ projects/04-agent-factory/generated/*
 
 # eval findings — may contain conversation text
 eval-findings/
+
+# day-10 idempotency store (runtime state)
+.idempotency.json
