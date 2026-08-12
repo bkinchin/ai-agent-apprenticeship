@@ -190,10 +190,24 @@ export async function bookTeeTime(args: {
   } catch (e) {
     const err = e as ToolError;
     if (err.kind === "conflict") {
+      // ALTERNATIVES MUST BE NEAR THE TIME THEY ASKED FOR.
+      //
+      // This was `slots.slice(0, 3)` — the earliest three of the whole
+      // day. A member asking for 09:20 was offered 07:00, 07:10 and
+      // 07:20, which is not an alternative, it is a different plan.
+      // Found by answering the reflection question "would you be happy
+      // receiving that message?", which is a better test than any
+      // assertion in the suite.
       const { slots } = await checkAvailability(date!, "00:00", "23:59").catch(() => ({ slots: [] }));
+      const minutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+      const wanted = minutes(time!);
+      const nearest = [...slots]
+        .sort((a, b) => Math.abs(minutes(a.time) - wanted) - Math.abs(minutes(b.time) - wanted))
+        .slice(0, 3)
+        .sort((a, b) => minutes(a.time) - minutes(b.time)); // present in time order
       return {
         status: "slot_taken",
-        alternatives: slots.slice(0, 3).map((s) => ({ slotId: s.slotId, time: s.time })),
+        alternatives: nearest.map((s) => ({ slotId: s.slotId, time: s.time })),
       };
     }
     return { status: "unavailable", reason: err.message };
