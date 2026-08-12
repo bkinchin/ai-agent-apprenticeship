@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "ask": "tsx --env-file=../../.env.local src/run/ask.ts",
     "tee-sheet": "tsx tee-sheet/server.ts",
-    "reliability": "tsx src/run/reliability.ts"
+    "reliability": "tsx src/run/reliability.ts",
+    "degraded": "tsx --env-file=../../.env.local src/run/degraded.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.0",
