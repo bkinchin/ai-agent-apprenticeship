@@ -4,9 +4,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
+import { AGENT_MODEL } from "../core/models.js";
 
 const client = new Anthropic();
-const MODEL = "claude-opus-5";
+const MODEL = AGENT_MODEL; // was hardcoded — see core/models.ts
 
 // A DISCRIMINATED UNION: two possible shapes. The "outcome" field
 // decides which one you're looking at, so the agent has an in-band,

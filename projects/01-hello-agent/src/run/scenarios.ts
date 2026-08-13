@@ -8,9 +8,10 @@ import { z } from "zod";
 import { auditLog, runTool, TOOL_SPECS, type ToolContext, type World } from "../core/executor.js";
 import { loadPolicy } from "../core/policy.js";
 import { canTransition, nextStages, restart, STAGE_TOOLS, type Stage, type TaskState } from "../core/workflow.js";
+import { AGENT_MODEL } from "../core/models.js";
 
 const client = new Anthropic();
-const MODEL = "claude-opus-5";
+const MODEL = AGENT_MODEL; // was hardcoded — see core/models.ts
 const policy = loadPolicy();
 
 /** Rebuilt per scenario — shared mutable fixtures make results order-dependent. */

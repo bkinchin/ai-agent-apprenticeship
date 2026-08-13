@@ -2,9 +2,10 @@
 // Run: npx tsx --env-file=../../.env.local src/tool-demo.ts
 
 import Anthropic from "@anthropic-ai/sdk";
+import { AGENT_MODEL } from "../core/models.js";
 
 const client = new Anthropic();
-const MODEL = "claude-opus-5";
+const MODEL = AGENT_MODEL; // was hardcoded — see core/models.ts
 
 // ── 1. Describe the tool to the model ────────────────────────────
 // This is DESCRIPTION only. We are not giving the model a function —

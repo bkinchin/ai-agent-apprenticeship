@@ -4,9 +4,10 @@
 // Run: npx tsx --env-file=../../.env.local src/write-demo.ts "your message"
 
 import Anthropic from "@anthropic-ai/sdk";
+import { AGENT_MODEL } from "../core/models.js";
 
 const client = new Anthropic();
-const MODEL = "claude-opus-5";
+const MODEL = AGENT_MODEL; // was hardcoded — see core/models.ts
 const MAX_STEPS = 8;
 
 const CUSTOMERS = [

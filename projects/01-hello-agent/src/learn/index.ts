@@ -5,9 +5,10 @@ import readline from "node:readline/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { assemble } from "../core/context.js";
 import { SqliteSessionStore } from "../core/sqlite-store.js";
+import { AGENT_MODEL } from "../core/models.js";
 
 const client = new Anthropic(); // reads ANTHROPIC_API_KEY from the environment
-const MODEL = "claude-opus-5";
+const MODEL = AGENT_MODEL; // was hardcoded — see core/models.ts
 
 const FORGET = process.argv.includes("--forget");
 const VERBOSE = process.argv.includes("--verbose");

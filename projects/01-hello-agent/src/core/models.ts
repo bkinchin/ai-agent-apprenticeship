@@ -14,13 +14,19 @@
 // assertion fire, does the report read correctly — costs a fifth as
 // much on Haiku, and none of that work needs the production model.
 //
-// Use the cheap model to build the eval. Use the real model for any
-// number you write down. A baseline measured on a model you would not
-// ship is not a baseline.
+// THE DEFAULT IS HAIKU, because this project's recorded baseline was
+// measured on Haiku and a default that disagrees with the baseline is a
+// trap. Opus is one env var away:
+//
+//   ANTHROPIC_MODEL=claude-opus-5 npm run eval
+//
+// Which model a project targets is a decision, not a default. The
+// honest reason to pick a cheap one is that a baseline you can afford
+// to re-run catches more regressions than a precise one you run twice.
 
 import { PRICING } from "./cost.js";
 
-const DEFAULT_AGENT = "claude-opus-5";
+const DEFAULT_AGENT = "claude-haiku-4-5";
 const DEFAULT_GUARD = "claude-haiku-4-5";
 
 /**

@@ -3,9 +3,10 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import { AGENT_MODEL } from "../core/models.js";
 
 const client = new Anthropic();
-const MODEL = "claude-opus-5";
+const MODEL = AGENT_MODEL; // was hardcoded — see core/models.ts
 
 const CUSTOMERS = [
   { id: "CUST-1029", email: "billy@example.com", name: "Billy Kinchin" },

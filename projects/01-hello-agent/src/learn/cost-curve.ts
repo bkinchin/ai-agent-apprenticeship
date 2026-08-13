@@ -6,9 +6,10 @@
 //   npx tsx --env-file=../../.env.local src/cost-curve.ts
 
 import Anthropic from "@anthropic-ai/sdk";
+import { AGENT_MODEL } from "../core/models.js";
 
 const client = new Anthropic();
-const MODEL = "claude-opus-5";
+const MODEL = AGENT_MODEL; // was hardcoded — see core/models.ts
 const PRICE_IN = 5.0; // USD per million input tokens
 
 const SYSTEM = "You are a helpful assistant. Keep your replies to two sentences.";
