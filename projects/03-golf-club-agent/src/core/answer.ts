@@ -243,8 +243,27 @@ export function verifyCitations(
       // VALUE. So check every number and time in the quote exists in the
       // structured data. A fabricated $25 guest fee still fails; a
       // reformatted true one does not.
-      const values = c.quote.match(/\d[\d:.]*/g) ?? [];
-      const missing = values.filter((v) => !structuredText.includes(v.toLowerCase()));
+      // NUMBERS ARE NOT THE ONLY VALUES.
+      //
+      // This matched digits only, so a true citation of
+      // {"currency": "AUD"} was reported as "quoted no value" — a
+      // detector failing an answer it cannot fault, which is the day-9
+      // JSON.stringify bug wearing a different hat. Day names, currency
+      // codes and booleans are facts a member can act on.
+      //
+      // Quoted strings count too, keys included: everything in the
+      // quote must trace back to the data. An invented "USD" fails; a
+      // reformatted true value does not.
+      const values = c.quote.match(/\d[\d:.]*|"[^"]+"/g) ?? [];
+      // NORMALISE THE NEEDLE THE SAME WAY AS THE HAYSTACK.
+      //
+      // structuredText is flat()-ed, and flat() strips underscores as
+      // markdown emphasis — so the haystack holds "greenfee" while a
+      // raw lowercase needle holds "green_fee", and a true citation is
+      // reported as invented. This is the day-9 JSON.stringify bug for
+      // the third time: the failure is never the matcher, it is the two
+      // sides being prepared differently.
+      const missing = values.filter((v) => !structuredText.includes(flat(v)));
       if (values.length === 0) {
         bad.push({ ...c, why: "cited structured data but quoted no value" });
       } else if (missing.length > 0) {

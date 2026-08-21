@@ -1,0 +1,57 @@
+# Who to reach, and how.
+#
+# Structured rather than narrative because every field has exactly one
+# right value — day 9's test: could two reasonable people read this and
+# disagree? No. So it is a lookup, not a document.
+#
+# It exists because the abstention branch routes ("ask the pro shop")
+# and until now nothing could turn that into something a member could
+# act on. The renderer had a phone number HARDCODED IN THE SOURCE, which
+# is an invented club fact in member-facing text — the exact thing the
+# citation machinery exists to prevent, sitting in the one place nobody
+# thought to check.
+
+meaning: >
+  Contact details for each role a member may be routed to. `contact` in
+  an agent answer is one of these keys. Hours are when a person actually
+  answers; outside them the agent is on its own.
+
+owner: Club Secretary
+last_updated: 2026-08-21
+review_due: 2027-02-21
+
+contacts:
+  pro_shop:
+    name: Pro Shop
+    phone: "02 9411 0388"
+    email: proshop@example-golf.com.au
+    hours: "08:00–16:30 daily"
+    handles: "Bookings, buggies, lessons, guests, course conditions, dress code on the course"
+
+  club_secretary:
+    name: Club Secretary
+    phone: "02 9411 0380"
+    email: secretary@example-golf.com.au
+    hours: "09:00–17:00 Mon–Fri"
+    handles: "Membership, rules of the club, complaints, anything not covered elsewhere"
+
+  bar_manager:
+    name: Bar Manager
+    phone: "02 9411 0384"
+    email: bar@example-golf.com.au
+    hours: "11:00–23:00 Fri–Sun, 11:00–20:00 Mon–Thu"
+    handles: "Clubhouse and spike bar, catering, dress code inside the clubhouse"
+
+  competition_secretary:
+    name: Competition Secretary
+    phone: "02 9411 0386"
+    email: comps@example-golf.com.au
+    hours: "Tue and Thu mornings, and Saturday from 07:00"
+    handles: "Competition entry, tee times on competition days, results, ties"
+
+  handicap_secretary:
+    name: Handicap Secretary
+    phone: "02 9411 0387"
+    email: handicap@example-golf.com.au
+    hours: "By email; replies within two working days"
+    handles: "Handicap index, cards, reviews, appeals"
