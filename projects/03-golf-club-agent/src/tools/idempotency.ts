@@ -141,3 +141,20 @@ export const seen = (key: string) => store.get(key)?.state === "done";
 /** A key that started and never finished. Worth surfacing in ops. */
 export const pending = () =>
   [...store.values()].filter((r) => r.state === "pending").map((r) => r.key);
+
+/**
+ * Empty the store — memory AND disk.
+ *
+ * Deleting the file is not resetting the store. `store` is loaded once
+ * at module import, so a test that unlinked .idempotency.json left the
+ * Map fully populated and carried keys from a completely unrelated
+ * process — a REPL session twenty minutes earlier — into an assertion
+ * about how many keys were pending.
+ *
+ * State in two places, one of them reset. For tests only: production
+ * has no legitimate reason to forget that a write may have landed.
+ */
+export function clearAll(): void {
+  store.clear();
+  if (existsSync(FILE)) writeFileSync(FILE, "{}");
+}

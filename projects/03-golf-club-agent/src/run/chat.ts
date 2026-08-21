@@ -20,7 +20,7 @@ import { loadStructured } from "../core/corpus.js";
 import { contactsFrom, devLines, memberText } from "../core/render.js";
 
 const contacts = contactsFrom(loadStructured());
-let session = newSession("M001");
+let session = newSession("M-1001");
 /** Show the developer view. Off = exactly what a member would see. */
 let dev = true;
 

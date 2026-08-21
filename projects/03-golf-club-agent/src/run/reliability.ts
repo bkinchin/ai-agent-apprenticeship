@@ -9,9 +9,9 @@
 
 import { spawn } from "node:child_process";
 import { z } from "zod";
-import { bookTeeTime, checkAvailability } from "../tools/tee-sheet.js";
+import { bookTeeTime, cancelBooking, checkAvailability } from "../tools/tee-sheet.js";
 import { resetCircuit } from "../tools/client.js";
-import { forget, pending } from "../tools/idempotency.js";
+import { clearAll, forget, pending } from "../tools/idempotency.js";
 import { confirmBooking, holdSlot } from "../tools/tee-sheet.js";
 import { unlinkSync, existsSync } from "node:fs";
 
@@ -26,6 +26,8 @@ const reset = async () => {
   await api("/_reset", { method: "POST" });
   await hostility({ latencyMs: 0, errorRate: 0, timeoutRate: 0, flakyWrites: false });
   resetCircuit();
+  // Memory AND disk. Unlinking alone left the in-memory Map intact.
+  clearAll();
   if (existsSync(IDEM)) unlinkSync(IDEM);
 };
 const state = () =>
@@ -76,8 +78,8 @@ try {
   await reset();
   {
     const [a, b] = await Promise.all([
-      bookTeeTime({ slotId: SLOT, memberId: "M-1001", partySize: 2, guests: 0, sessionId: "S-a" }),
-      bookTeeTime({ slotId: SLOT, memberId: "M-1002", partySize: 2, guests: 0, sessionId: "S-b" }),
+      bookTeeTime({ slotId: SLOT, memberId: "M-1001", partySize: 2, guests: 0, sessionId: "S-a", step: 1 }),
+      bookTeeTime({ slotId: SLOT, memberId: "M-1002", partySize: 2, guests: 0, sessionId: "S-b", step: 1 }),
     ]);
     const world = await state();
     const winners = [a, b].filter((r) => r.status === "booked");
@@ -165,6 +167,46 @@ try {
     check("without the key, the member ends up with two bookings",
       world.bookings.length === 2,
       `(was ${world0.bookings.length}, now ${world.bookings.length})`);
+  }
+
+  // ═══ 5. THE WRONG COLLISION ═══════════════════════════════════
+  //
+  // Book, cancel, book the SAME SLOT AGAIN, all in one session.
+  //
+  // Every check above this one runs in a FRESH SESSION, which is
+  // exactly the variable this bug needs — so the suite was blind to it
+  // while bookTeeTime had `step: 1` hardcoded and every booking in a
+  // session shared one idempotency key. The member cancelled, booked
+  // again, and was handed the CANCELLED booking's reference.
+  //
+  // Day 10's reflection described this failure in prose while the code
+  // was already committing it. A hypothetical in a document is not a
+  // test; only a test is a test.
+  console.log("\n5. the wrong collision — book, cancel, rebook in ONE session");
+  await reset();
+  {
+    const session = "S-rebook";
+    const first = await bookTeeTime({
+      slotId: SLOT, memberId: "M-1001", partySize: 1, guests: 0, sessionId: session, step: 1,
+    });
+    if (first.status !== "booked") throw new Error(`setup failed: ${first.status}`);
+
+    await cancelBooking({
+      bookingId: first.bookingId, memberId: "M-1001", sessionId: session, step: 2,
+    });
+
+    const second = await bookTeeTime({
+      slotId: SLOT, memberId: "M-1001", partySize: 1, guests: 0, sessionId: session, step: 3,
+    });
+
+    check("the rebooking succeeded", second.status === "booked", `(${second.status})`);
+    check("it is a NEW reference, not the cancelled one",
+      second.status === "booked" && second.bookingId !== first.bookingId,
+      second.status === "booked" ? `${first.bookingId} → ${second.bookingId}` : "");
+
+    const world = await state();
+    check("the tee sheet holds exactly one live booking",
+      world.bookings.length === 1, `(${world.bookings.length})`);
   }
 
   console.log(`\n${failures === 0 ? "all checks passed" : `${failures} check(s) FAILED`}\n`);

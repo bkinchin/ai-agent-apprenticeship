@@ -26,7 +26,7 @@ await new Promise((r) => setTimeout(r, 3000));
 
 console.log("\n─── tee sheet UP ───────────────────────────────────");
 const ok = await bookTeeTime({
-  slotId: SLOT, memberId: "M-1002", partySize: 2, guests: 0, sessionId: "S-up",
+  slotId: SLOT, memberId: "M-1002", partySize: 2, guests: 0, sessionId: "S-up", step: 1,
 });
 console.log(`  booking: ${ok.status}${ok.status === "booked" ? `  ${ok.bookingId}` : ""}`);
 
@@ -39,7 +39,7 @@ console.log("\n─── tee sheet DOWN ─────────────�
 
 // 1. Booking fails — but as an outcome, not an exception.
 const down = await bookTeeTime({
-  slotId: `${tomorrow}T10:50`, memberId: "M-1002", partySize: 2, guests: 0, sessionId: "S-down",
+  slotId: `${tomorrow}T10:50`, memberId: "M-1002", partySize: 2, guests: 0, sessionId: "S-down", step: 1,
 });
 console.log(`  booking: ${down.status}`);
 if (down.status === "unavailable") console.log(`           reason: ${down.reason}`);
@@ -48,7 +48,7 @@ if (down.status === "unavailable") console.log(`           reason: ${down.reason
 //    host. Fail fast, and stop making someone else's outage worse.
 for (let i = 0; i < 5; i++) {
   await bookTeeTime({
-    slotId: `${tomorrow}T11:0${i}`, memberId: "M-1002", partySize: 1, guests: 0, sessionId: `S-x${i}`,
+    slotId: `${tomorrow}T11:0${i}`, memberId: "M-1002", partySize: 1, guests: 0, sessionId: `S-x${i}`, step: 1,
   }).catch(() => {});
 }
 const c = circuitState();

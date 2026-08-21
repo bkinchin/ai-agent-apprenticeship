@@ -47,7 +47,7 @@ export const getMemberAllowance = (memberId: string) =>
 
 export const listCompetitions = () => request("/competitions", Competitions);
 
-const listBookings = (memberId: string) =>
+export const listBookings = (memberId: string) =>
   request(`/bookings?memberId=${memberId}`, Bookings);
 
 // ── writes ──────────────────────────────────────────────────────
@@ -153,7 +153,21 @@ export type BookOutcome =
   | { status: "booked"; bookingId: string; slotId: string; time: string }
   | { status: "slot_taken"; alternatives: { slotId: string; time: string }[] }
   | { status: "not_permitted"; reason: string }
-  | { status: "unavailable"; reason: string };
+  /**
+   * The call did not complete. `transient` decides what the member is told.
+   *
+   * These used to be one thing, and a 404 on the member ID was reported
+   * as "I can't reach the tee sheet at the moment" — an outage message
+   * for a system that was up. A member told the wrong cause rings back
+   * tomorrow and is told it was never down.
+   *
+   * Day 10's retry table already draws this line (a 4xx is a fact about
+   * the request; a timeout is a fact about the network). Flattening
+   * both into one status threw that away at the boundary — which is
+   * where classifications usually get lost, one layer above the code
+   * that worked them out.
+   */
+  | { status: "unavailable"; reason: string; transient: boolean };
 
 /**
  * Book a tee time: hold → validate → confirm → notify.
@@ -180,6 +194,20 @@ export async function bookTeeTime(args: {
   partySize: number;
   guests: number;
   sessionId: string;
+  /**
+   * Monotonic within the session. NOT optional, and never a constant.
+   *
+   * This was hardcoded to 1, which gave every booking in a session the
+   * same idempotency key. Book, cancel, book the same slot again, and
+   * the third step returned the FIRST booking's reference — a member
+   * told they hold a slot that was cancelled two turns ago.
+   *
+   * Day 10's reflection wrote this failure down as a hypothetical while
+   * the code was already doing it. reliability.ts missed it because
+   * every check runs in a fresh session, which is the one variable the
+   * bug needs.
+   */
+  step: number;
 }): Promise<BookOutcome> {
   const [date, time] = args.slotId.split("T");
 
@@ -210,7 +238,12 @@ export async function bookTeeTime(args: {
         alternatives: nearest.map((s) => ({ slotId: s.slotId, time: s.time })),
       };
     }
-    return { status: "unavailable", reason: err.message };
+    return {
+      status: "unavailable",
+      reason: err.message,
+      transient: err.kind === "timeout" || err.kind === "server" ||
+        err.kind === "ratelimit" || err.kind === "circuit_open",
+    };
   }
 
   try {
@@ -236,7 +269,7 @@ export async function bookTeeTime(args: {
       partySize: args.partySize,
       guests: args.guests,
       sessionId: args.sessionId,
-      step: 1,
+      step: args.step,
     });
 
     // 4 ── last, because it cannot be un-sent. And per the PRD it is
@@ -252,7 +285,12 @@ export async function bookTeeTime(args: {
     await releaseHold(hold.holdId).catch(() => {});
 
     if (e instanceof NotPermitted) return { status: "not_permitted", reason: e.message };
-    return { status: "unavailable", reason: (e as Error).message };
+    const k = (e as ToolError).kind;
+    return {
+      status: "unavailable",
+      reason: (e as Error).message,
+      transient: k === "timeout" || k === "server" || k === "ratelimit" || k === "circuit_open",
+    };
   }
 }
 

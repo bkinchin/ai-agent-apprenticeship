@@ -55,6 +55,32 @@ export function contactsFrom(structured: Record<string, unknown>): Record<string
   return file?.contacts ?? {};
 }
 
+/**
+ * "2026-08-23" → "Saturday 23 August".
+ *
+ * UTC throughout, deliberately. Constructing a local Date from a
+ * date-only string lands on midnight local, and any timezone west of
+ * the parse shifts the weekday by one — an agent in Sydney telling a
+ * member "Friday" for a Saturday booking. A date with no time in it
+ * has no timezone; treating it as if it did is how the day slips.
+ */
+function niceDate(isoDate: string): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return isoDate;
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-AU", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  });
+}
+
+const list = (xs: string[]): string =>
+  xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} or ${xs[xs.length - 1]}`;
+
+/** Capitalise a fragment that has ended up starting a sentence. */
+const sentence = (t: string): string => t.charAt(0).toUpperCase() + t.slice(1);
+
 const reachable = (c: Contact | undefined): string =>
   c ? `the ${c.name} on ${c.phone} (${c.hours})` : "the pro shop";
 
@@ -66,6 +92,7 @@ const reachable = (c: Contact | undefined): string =>
  * silence; this function does not invent something to fill it.
  */
 export function memberText(r: Reply, contacts: Record<string, Contact>): string | null {
+  if (r.kind === "trace") return null; // developer channel. never a member's.
   if (r.kind === "text") return r.text;
 
   if (r.kind === "error") {
@@ -73,8 +100,59 @@ export function memberText(r: Reply, contacts: Record<string, Contact>): string 
     // action, and the next action is a person.
     return (
       `Sorry — I can't help with that right now. ` +
-      `${reachable(contacts.pro_shop)} will be able to.`
+      `${sentence(reachable(contacts.pro_shop))} will be able to.`
     );
+  }
+
+  // ── writes, reported from the record ──────────────────────────
+  //
+  // Every fact in these sentences comes from what the tee sheet
+  // returned, never from what the model said it was doing. That is the
+  // PRD's founding requirement, and the reason the confirmation email
+  // must be generated the same way.
+
+  if (r.kind === "booking") {
+    const o = r.outcome;
+    if (o.status === "booked") {
+      const { date, time } = { date: o.slotId.split("T")[0] ?? "", time: o.time };
+      return `You're booked — ${niceDate(date)} at ${time}. Your reference is ${o.bookingId}.`;
+    }
+    if (o.status === "slot_taken") {
+      // A conflict is a conversation, not an exception. And it says WHY:
+      // "someone's just taken it" tells the member this was bad luck
+      // seconds ago, not a rule they have fallen foul of.
+      if (o.alternatives.length === 0) {
+        return `Someone's just taken that one, I'm afraid, and there's nothing else free that day.`;
+      }
+      return (
+        `Someone's just taken that one, I'm afraid. ` +
+        `I can do ${list(o.alternatives.map((a) => a.time))} — any good?`
+      );
+    }
+    if (o.status === "not_permitted") return `I can't book that — ${o.reason}.`;
+    // `reason` is an engineer's string and never reaches the member.
+    // What reaches them is which of two situations they are in.
+    return o.transient
+      ? `I can't reach the tee sheet at the moment, so I haven't booked anything. ` +
+        `${sentence(reachable(contacts.pro_shop))} can do it directly.`
+      : `Something isn't right with your membership record, so I haven't booked anything. ` +
+        `${sentence(reachable(contacts.pro_shop))} can sort that out.`;
+  }
+
+  if (r.kind === "cancelled") {
+    return r.ok
+      ? `That's cancelled.`
+      : `I couldn't cancel that — ${reachable(contacts.pro_shop)} can sort it out.`;
+  }
+
+  if (r.kind === "bookings") {
+    if (r.bookings.length === 0) return `You've nothing booked at the moment.`;
+    const lines = r.bookings.map((b) => {
+      const [date, time] = b.slotId.split("T");
+      const guests = b.guests > 0 ? ` (${b.guests} guest${b.guests > 1 ? "s" : ""})` : "";
+      return `  · ${niceDate(date ?? "")} at ${time}${guests} — ${b.id}`;
+    });
+    return `You've got ${r.bookings.length === 1 ? "one booking" : `${r.bookings.length} bookings`}:\n${lines.join("\n")}`;
   }
 
   const a = r.answer;
@@ -121,7 +199,15 @@ export function memberText(r: Reply, contacts: Record<string, Contact>): string 
  */
 export function devLines(r: Reply): string[] {
   const out: string[] = [];
+  if (r.kind === "trace") {
+    out.push(`→ ${r.tool}(${JSON.stringify(r.args)})`);
+    out.push(`  ${r.note}`);
+    return out;
+  }
   if (r.kind === "error") out.push(`error: ${r.text}`);
+  if (r.kind === "booking") out.push(`tee sheet: ${JSON.stringify(r.outcome)}`);
+  if (r.kind === "cancelled") out.push(`tee sheet: cancelled=${r.ok}`);
+  if (r.kind === "bookings") out.push(`tee sheet: ${r.bookings.length} booking(s)`);
   if (r.kind !== "verbatim") return out;
 
   const a = r.answer;

@@ -41,6 +41,13 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
+import {
+  bookTeeTime,
+  cancelBooking,
+  checkAvailability,
+  listBookings,
+  type BookOutcome,
+} from "../tools/tee-sheet.js";
 import { ask, MODEL, type Answer } from "./answer.js";
 import { loadDocuments, loadStructured } from "./corpus.js";
 
@@ -66,6 +73,21 @@ export interface Session {
    */
   step: number;
   history: MessageParam[];
+  /**
+   * Slots the tee sheet has offered THIS SESSION.
+   *
+   * THE MODEL MAY NOT INVENT A SLOT ID. Every valid one came back from
+   * a check_availability call minutes ago, so a booking request naming
+   * anything else is either a transcription slip or a slot the model
+   * reasoned "should" be free. Both produce a member booked onto
+   * something they did not choose.
+   *
+   * The PRD's rule — confirm from the record, never from the agent's
+   * message — makes that error RECOVERABLE, because the member reads
+   * the true time. This makes most of it IMPOSSIBLE, which is better.
+   * Detection is what you build when prevention is unavailable.
+   */
+  offered: Map<string, { date: string; time: string }>;
 }
 
 export const newSession = (memberId: string): Session => ({
@@ -73,6 +95,7 @@ export const newSession = (memberId: string): Session => ({
   sessionId: `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   step: 0,
   history: [],
+  offered: new Map(),
 });
 
 /**
@@ -86,8 +109,32 @@ export const newSession = (memberId: string): Session => ({
  */
 export type Reply =
   | { kind: "text"; text: string }
+  /**
+   * A write, reported FROM THE RECORD.
+   *
+   * The whole PRD rests on this: an agent's characteristic failure is
+   * telling the member "Saturday 9am" while writing Sunday to the
+   * sheet. If the confirmation is composed by the agent it repeats
+   * "Saturday", the member is satisfied, and the error stays invisible
+   * until they turn up. Generated from the record, the club's existing
+   * error-detection loop keeps working.
+   */
+  | { kind: "booking"; outcome: BookOutcome }
+  | { kind: "cancelled"; ok: boolean }
+  | { kind: "bookings"; bookings: { id: string; slotId: string; guests: number }[] }
   | { kind: "verbatim"; answer: Answer; badCitations: { source: string; why: string }[]; staleSources: { id: string; reviewDue: string }[] }
-  | { kind: "error"; text: string };
+  | { kind: "error"; text: string }
+  /**
+   * Developer-only. Never reaches a member — memberText returns null.
+   *
+   * Added because a booking conversation went wrong and the transcript
+   * could not say why: check_availability produced no visible output,
+   * so "there are no free tee times" was indistinguishable from "the
+   * tee sheet errored and the model narrated the error as an empty
+   * result". A tool whose result you cannot inspect is a tool you
+   * cannot debug, and the second reading turned out to be the true one.
+   */
+  | { kind: "trace"; tool: string; args: unknown; note: string };
 
 /**
  * A ceiling on model calls per turn.
@@ -106,7 +153,24 @@ const MAX_STEPS = 6;
  * mechanism, so it lives next to the loop rather than in a config file
  * three directories away.
  */
-const TERMINAL = new Set(["search_knowledge", "end_turn"]);
+const TERMINAL = new Set([
+  "search_knowledge",
+  "end_turn",
+  // WRITES ARE REPORTED BY CODE, NOT NARRATED BY THE MODEL.
+  //
+  // `check_availability` is deliberately NOT here: availability is
+  // transient, and a garbled time is caught seconds later when the
+  // booking fails. A garbled BOOKING is caught on Saturday, at the
+  // club, in front of other members. That asymmetry is the whole
+  // reason for the line.
+  //
+  // list_my_bookings is on the list for the same reason — it states a
+  // booking's details, and a member told the wrong time misses a round
+  // whether the sentence came from a write or a read.
+  "book_tee_time",
+  "cancel_booking",
+  "list_my_bookings",
+]);
 
 const TOOLS: Tool[] = [
   {
@@ -128,6 +192,58 @@ const TOOLS: Tool[] = [
         },
       },
       required: ["question"],
+    },
+  },
+  {
+    name: "check_availability",
+    description:
+      "Free tee times on a date. Returns real slot IDs from the tee sheet. " +
+      "Call this before any booking — you cannot book a slot you have not been shown.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "YYYY-MM-DD" },
+        from: { type: "string", description: "Earliest time, HH:MM. Default 00:00." },
+        to: { type: "string", description: "Latest time, HH:MM. Default 23:59." },
+      },
+      required: ["date"],
+    },
+  },
+  {
+    name: "list_my_bookings",
+    // NO memberId PARAMETER. See the note in execute().
+    description:
+      "The member's current bookings. Shown to the member directly from the tee sheet — " +
+      "do not restate the times afterwards.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "book_tee_time",
+    description:
+      "Book a tee time. The slot ID must be one check_availability gave you in this " +
+      "conversation. Confirmation goes to the member directly from the tee-sheet record — " +
+      "do not tell them the date or time yourself, and do not say the booking is made " +
+      "before calling this.",
+    input_schema: {
+      type: "object",
+      properties: {
+        slotId: { type: "string", description: "Exactly as returned by check_availability." },
+        partySize: { type: "number", description: "Total players including the member." },
+        guests: { type: "number", description: "How many of the party are guests." },
+      },
+      required: ["slotId", "partySize", "guests"],
+    },
+  },
+  {
+    name: "cancel_booking",
+    description:
+      "Cancel one of the member's bookings. Get the ID from list_my_bookings. " +
+      "Cancelling within 24 hours of the tee time incurs a fee — if the member has not " +
+      "already been told that, ask search_knowledge before cancelling, not after.",
+    input_schema: {
+      type: "object",
+      properties: { bookingId: { type: "string" } },
+      required: ["bookingId"],
     },
   },
   {
@@ -168,7 +284,37 @@ const TOOLS: Tool[] = [
   },
 ];
 
-const SYSTEM = `You are the member services agent for a golf club.
+/**
+ * THE MODEL DOES NOT KNOW WHAT DAY IT IS.
+ *
+ * Asked for "Saturday the 29th of August" it called the tee sheet for
+ * 2025-08-29 — last year, and a Friday. The sheet answered truthfully
+ * about a date nobody asked about, and the model reported "no free
+ * slots Saturday morning, 29 August", confirming the member's own word
+ * back to them while having checked a different day.
+ *
+ * Nothing had ever told it the date. A model's sense of "today" is its
+ * training cutoff, which is neither today nor stable, so every agent
+ * doing date arithmetic needs this and most do not have it.
+ *
+ * Built fresh per turn rather than at module load: a process that stays
+ * up overnight would otherwise serve yesterday's date to tomorrow's
+ * members, which is the same bug with a slower fuse.
+ */
+const systemPrompt = (): string => {
+  const today = new Date();
+  const fmt = (d: Date) =>
+    d.toLocaleDateString("en-AU", {
+      weekday: "long", day: "numeric", month: "long", year: "numeric",
+      timeZone: "Australia/Sydney",
+    });
+  const iso = today.toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" });
+  return `Today is ${fmt(today)}. In ISO form that is ${iso}.
+
+The club is in Sydney. When a member names a day without a year they mean the
+NEXT one — never a past date. Members can book up to six weeks ahead.
+
+You are the member services agent for a golf club.
 
 You route. You do not answer from your own knowledge.
 
@@ -185,6 +331,35 @@ not restate what you think it said. Call the tool; the turn ends there.
 If a question is not about the club at all, say so briefly.
 
 Be warm and short. Members are usually on a phone.`;
+};
+
+const weekday = (isoDate: string): string => {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return "";
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-AU", {
+    weekday: "long", timeZone: "UTC",
+  });
+};
+
+/** Why this date cannot be booked, or undefined. Pure — testable with no model. */
+export function dateProblem(isoDate: string, now = new Date()): string | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return `"${isoDate}" is not a date.`;
+  const today = now.toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" });
+  if (isoDate < today) return `${isoDate} is in the past (today is ${today}).`;
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const limit = new Date(now.getTime() + 42 * 864e5).toLocaleDateString("en-CA", {
+    timeZone: "Australia/Sydney",
+  });
+  if (isoDate > limit) return `${isoDate} is more than six weeks ahead (the limit is ${limit}).`;
+  void y; void m; void d;
+  return undefined;
+}
+
+/** "2026-08-23T09:20" → { date, time }. The tee sheet's slot IDs are self-describing. */
+const slotParts = (slotId: string) => {
+  const [date, time] = slotId.split("T");
+  return { date: date ?? slotId, time: time ?? "" };
+};
 
 /** One member turn. Returns everything the member should see, in order. */
 export async function turn(s: Session, input: string): Promise<Reply[]> {
@@ -195,7 +370,7 @@ export async function turn(s: Session, input: string): Promise<Reply[]> {
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 1024,
-      system: SYSTEM,
+      system: systemPrompt(),
       tools: TOOLS,
       // THE MODEL DOES NOT GET TO DECIDE WHETHER A QUESTION IS IN SCOPE.
       //
@@ -247,6 +422,7 @@ export async function turn(s: Session, input: string): Promise<Reply[]> {
     for (const call of calls) {
       s.step++;
       const { reply, forModel } = await execute(s, call.name, call.input);
+      out.push({ kind: "trace", tool: call.name, args: call.input, note: forModel });
       if (reply) out.push(reply);
       results.push({ type: "tool_result", tool_use_id: call.id, content: forModel });
       if (TERMINAL.has(call.name)) terminated = true;
@@ -313,6 +489,137 @@ async function execute(
           ? `Answered and shown to the member, with sources. Question: "${question}"`
           : `Could not answer from the knowledge base; the member was told who to ask.`,
     };
+  }
+
+  if (name === "check_availability") {
+    const { date, from, to } = input as { date: string; from?: string; to?: string };
+
+    // THE BUSINESS RULE IS ALSO THE SANITY CHECK.
+    //
+    // "Six weeks ahead, never the past" comes from booking-rules.yaml,
+    // and enforcing it in code catches the model's wrong-year guess
+    // before it becomes a truthful answer about the wrong day. A rule
+    // worth having is usually worth having as a guard.
+    const problem = dateProblem(date);
+    if (problem) return { forModel: `Refused: ${problem} Ask the member which date they mean.` };
+
+    try {
+      const { slots } = await checkAvailability(date, from ?? "00:00", to ?? "23:59");
+      // EVERY OFFERED SLOT GOES IN THE LEDGER, including the ones the
+      // model chooses not to mention. If the tee sheet offered it, the
+      // member may name it.
+      for (const sl of slots) s.offered.set(sl.slotId, { date: sl.date, time: sl.time });
+      return {
+        // The WEEKDAY goes back too. If the member said Saturday and
+        // this says Friday, the model can see the mismatch — it could
+        // not before, because a bare ISO date carries no day name.
+        forModel:
+          slots.length === 0
+            ? `No free slots on ${weekday(date)} ${date} in that window.`
+            : `Free slots on ${weekday(date)} ${date}: ` +
+              slots.map((x) => `${x.time} (${x.slotId})`).join(", "),
+      };
+    } catch (e) {
+      return { forModel: `The tee sheet is unavailable: ${(e as Error).message}. Do not guess.` };
+    }
+  }
+
+  if (name === "list_my_bookings") {
+    try {
+      const { bookings } = await listBookings(s.memberId);
+      // Offered, therefore cancellable and re-bookable.
+      for (const b of bookings) s.offered.set(b.slotId, slotParts(b.slotId));
+      return {
+        reply: { kind: "bookings", bookings },
+        // IDs INCLUDED, DELIBERATELY.
+        //
+        // The first version withheld them — "shown to the member, do
+        // not restate" — and the model then tried to cancel using a
+        // slot ID, because it had never been told a booking ID exists.
+        // Terminal means the model does not WRITE the member's
+        // sentence; it does not mean starving it of the handles it
+        // needs to act. Withholding those protected nothing.
+        forModel:
+          bookings.length === 0
+            ? `The member has no bookings. They have been told.`
+            : `Shown to the member from the record. Do not restate the times. ` +
+              `For your own use when cancelling: ` +
+              bookings.map((b) => `${b.id} = ${b.slotId}`).join(", "),
+      };
+    } catch (e) {
+      return {
+        reply: { kind: "error", text: (e as Error).message },
+        forModel: `The tee sheet is unavailable. Do not guess what they have booked.`,
+      };
+    }
+  }
+
+  if (name === "book_tee_time") {
+    const { slotId, partySize, guests } = input as {
+      slotId: string;
+      partySize: number;
+      guests: number;
+    };
+
+    // THE LEDGER CHECK. A prompt asking the model to only book slots it
+    // was shown is a request; this is a guarantee. It stops both a
+    // transcription slip and a slot the model reasoned "should" be free.
+    if (!s.offered.has(slotId)) {
+      return {
+        forModel:
+          `Refused: ${slotId} is not a slot the tee sheet offered in this conversation. ` +
+          `Call check_availability and book one of the slot IDs it returns.`,
+      };
+    }
+
+    try {
+      const outcome = await bookTeeTime({
+        slotId,
+        memberId: s.memberId,
+        partySize,
+        guests,
+        sessionId: s.sessionId,
+        step: s.step,
+      });
+      // Alternatives are offers too — a member may take one next turn.
+      if (outcome.status === "slot_taken") {
+        for (const a of outcome.alternatives) s.offered.set(a.slotId, slotParts(a.slotId));
+      }
+      return {
+        reply: { kind: "booking", outcome },
+        forModel:
+          outcome.status === "booked"
+            ? `Booked. The member has been shown the confirmation from the tee-sheet record. ` +
+              `Do not repeat the date, time or reference.`
+            : `Not booked (${outcome.status}). The member has been told. Do not invent a fix.`,
+      };
+    } catch (e) {
+      return {
+        reply: { kind: "error", text: (e as Error).message },
+        forModel: `The booking failed and it is NOT known whether it landed. Do not retry.`,
+      };
+    }
+  }
+
+  if (name === "cancel_booking") {
+    const { bookingId } = input as { bookingId: string };
+    try {
+      const r = await cancelBooking({
+        bookingId,
+        memberId: s.memberId,
+        sessionId: s.sessionId,
+        step: s.step,
+      });
+      return {
+        reply: { kind: "cancelled", ok: r.cancelled },
+        forModel: `Cancellation reported to the member from the record.`,
+      };
+    } catch (e) {
+      return {
+        reply: { kind: "error", text: (e as Error).message },
+        forModel: `The cancellation failed and may or may not have landed. Do not retry.`,
+      };
+    }
   }
 
   if (name === "end_turn") {
