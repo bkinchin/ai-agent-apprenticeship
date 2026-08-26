@@ -214,3 +214,24 @@ test("an affirmative is recognised, but is not itself permission", () => {
   }
   assert.equal(isAffirmative("yesterday I played badly"), false, "not a bare affirmative");
 });
+
+// ═══ the trimmed-quote bypass ═════════════════════════════════════
+test("the exclusion list cannot see a category the model trimmed away", () => {
+  // This is the BYPASS, asserted so it stays visible rather than
+  // looking like an oversight. A member said:
+  //
+  //   "I've had a knee replacement so remember I'll always need a buggy"
+  //
+  // and the model handed over the quote "I'll always need a buggy" —
+  // correctly, by the tool description, which asks for the part that
+  // states the preference. The health rule then saw a clean string.
+  //
+  // Nothing is wrong with excludedBy here. The bug was upstream: the
+  // guard was being shown the model's output instead of the member's
+  // words, which is the model marking its own homework.
+  const said = "I've had a knee replacement so remember I'll always need a buggy";
+  const trimmed = "I'll always need a buggy";
+
+  assert.equal(excludedBy(said), "health", "the full turn is caught");
+  assert.equal(excludedBy(trimmed), undefined, "the trimmed quote is not, and cannot be");
+});

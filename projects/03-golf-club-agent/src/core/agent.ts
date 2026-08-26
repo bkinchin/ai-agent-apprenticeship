@@ -50,6 +50,7 @@ import {
 } from "../tools/tee-sheet.js";
 import {
   MemoryStore,
+  excludedBy,
   isAffirmative,
   isNegative,
   statedAsStanding,
@@ -142,9 +143,9 @@ export interface Session {
    * It survives exactly one turn. A proposal the member walked past is
    * not consent they gave later.
    */
-  pendingMemory?: { key: string; value: string; quote: string };
+  pendingMemory?: { key: string; value: string; quote: string; turn: string };
   /** This turn's view of pendingMemory, snapshotted at the top of turn(). */
-  consumable?: { key: string; value: string; quote: string };
+  consumable?: { key: string; value: string; quote: string; turn: string };
 }
 
 export const newSession = (memberId: string): Session => ({
@@ -599,13 +600,18 @@ export async function turn(s: Session, input: string): Promise<Reply[]> {
       return [{ kind: "text", text: "No problem — I won't note it down." }];
     }
 
-    const r = memory.remember(s.memberId, {
-      type: "preference",
-      key: draft.key,
-      value: draft.value,
-      confidence: 0.95,
-      source: { sessionId: s.sessionId, turnIndex: s.history.length, quote: draft.quote },
-    });
+    // Same rule on the consent path: the turn that produced the offer
+    // is checked, not just the trimmed quote the model proposed.
+    const blocked = excludedBy(draft.turn);
+    const r = blocked
+      ? ({ refused: blocked } as const)
+      : memory.remember(s.memberId, {
+          type: "preference",
+          key: draft.key,
+          value: draft.value,
+          confidence: 0.95,
+          source: { sessionId: s.sessionId, turnIndex: s.history.length, quote: draft.quote },
+        });
     const text =
       "refused" in r
         ? `I'll keep that in mind for now, but I won't write it down.`
@@ -946,7 +952,7 @@ async function execute(
       //
       // So code asks, in the same statement that arms it. If we armed
       // it, we asked. There is no ordering left to get wrong.
-      s.pendingMemory = { key, value, quote };
+      s.pendingMemory = { key, value, quote, turn: turnText };
       return {
         reply: {
           kind: "aside",
@@ -957,6 +963,38 @@ async function execute(
           `They have BEEN ASKED whether to note it; say nothing further about it this turn.`,
       };
     }
+    // EXCLUSIONS ARE CHECKED AGAINST WHAT THE MEMBER SAID, NOT AGAINST
+    // WHAT THE MODEL HANDED US.
+    //
+    // A member said "I've had a knee replacement so remember I'll
+    // always need a buggy". The model trimmed the quote to "I'll always
+    // need a buggy" — correctly, by the tool description, which asks
+    // for the part that states the preference — and the health rule saw
+    // a clean string and let it through. The trim removed the very
+    // clause the exclusion existed to catch.
+    //
+    // The trim is right for quality; the mistake was letting the guard
+    // inspect the model's output. That is the model marking its own
+    // homework, and it is exactly what the write policy above avoids by
+    // reading the member's turn. Two guards on one turn should not
+    // disagree about where the truth is.
+    //
+    // The full turn is CHECKED but never STORED — writing "knee
+    // replacement" into the provenance field as evidence would be the
+    // same failure wearing a different hat.
+    const inTurn = excludedBy(turnText);
+    if (inTurn) {
+      return {
+        reply: {
+          kind: "text",
+          text:
+            `I'll help with that now, but I won't write it down — it touches on something ` +
+            `personal and we don't keep records of that sort of thing.`,
+        },
+        forModel: `Refused (${inTurn}) — it is in what they said. Help them THIS TURN, do not retry.`,
+      };
+    }
+
     const r = memory.remember(s.memberId, {
       type: "preference",
       key: draft.key,

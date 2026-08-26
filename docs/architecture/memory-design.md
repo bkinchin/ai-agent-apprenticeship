@@ -65,7 +65,17 @@ What remained after removing the ticket was preference. That is what this stores
 
 > **An exclusion list is not about what the agent may hear. It is about what survives the conversation.**
 
-Enforced at write time in code, and checked against the **quote** as well as the value — a sanitised value with a sensitive quote behind it still puts the sensitive text in the database, and the quote is the field we promise to show the member.
+Enforced at write time in code, and checked against **what the member actually said** — not against the quote the model supplies.
+
+That distinction was learned by getting it wrong. A member said:
+
+> *"I've had a knee replacement so remember I'll always need a buggy"*
+
+The model handed over the quote `"I'll always need a buggy"` — **correctly**, because the tool description asks for the part that states the preference. The health rule saw a clean string and stored it.
+
+Nothing was wrong with the rule. The guard was being shown **the model's output instead of the member's words**, which is the model marking its own homework — the exact failure the write policy avoids two lines earlier by reading the turn. *Two guards on one turn must not disagree about where the truth is.*
+
+The full turn is **checked but never stored**. Writing "knee replacement" into the provenance field as evidence of why we refused would be the same failure wearing a different hat.
 
 ### It is a backstop, not the defence
 
