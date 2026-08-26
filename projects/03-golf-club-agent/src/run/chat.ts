@@ -128,7 +128,26 @@ async function handle(input: string): Promise<boolean> {
 // So a non-TTY stdin is read to completion first and replayed turn by
 // turn. Same `handle`, same agent, no dropped lines.
 if (process.stdin.isTTY) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  // terminal: false — READLINE MUST NOT ECHO.
+  //
+  // In a plain terminal, readline puts the tty into raw mode and owns
+  // the echo. Some embedded terminals (the Claude Code app's, for one)
+  // do not hand over raw mode, so the pty echoes each character AND
+  // readline echoes it again: "bbooookk mmee ssaattuurrddaayy".
+  //
+  // The input itself was always correct — the agent received one copy.
+  // It is the display that doubles, which makes it a cosmetic bug that
+  // looks like a serious one, and those are the ones people report as
+  // "the agent is broken".
+  //
+  // With terminal: false readline leaves the tty alone, so the
+  // terminal's own echo shows the line exactly once in both cases. The
+  // cost is arrow-key history and line editing inside the REPL.
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: false,
+  });
   for (;;) {
     let input: string;
     try {
