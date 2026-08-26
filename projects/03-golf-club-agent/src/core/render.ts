@@ -110,7 +110,7 @@ export function memberText(
   guestFee?: number,
 ): string | null {
   if (r.kind === "trace") return null; // developer channel. never a member's.
-  if (r.kind === "text") return r.text;
+  if (r.kind === "text" || r.kind === "aside") return r.text;
 
   if (r.kind === "error") {
     // No diagnostic, and no apology theatre. A member wants the next
@@ -153,8 +153,20 @@ export function memberText(
         o.guests > 0 && guestFee
           ? ` Guest fees come to $${o.guests * guestFee} on your account.`
           : "";
+      // SAY SO WHEN IT IS NOT WHAT THEY ASKED FOR.
+      //
+      // Silently booking 09:50 for a member who said 09:40 is truthful
+      // and still wrong: they have to notice the discrepancy
+      // themselves, in a sentence that reads like a confirmation of
+      // what they wanted.
+      const swapped =
+        r.requested && r.requested !== o.time
+          ? `${r.requested} had gone, so I've put you in at ${o.time} — `
+          : "";
       return (
-        `You're booked — ${niceDate(date)} at ${o.time}, ${who}.${fee} ` +
+        `${swapped ? swapped : `You're booked — `}` +
+        `${swapped ? `${niceDate(date)}` : `${niceDate(date)} at ${o.time}`}` +
+        `${swapped ? ` — ${who}` : `, ${who}`}.${fee} ` +
         `Your reference is ${o.bookingId}.`
       );
     }

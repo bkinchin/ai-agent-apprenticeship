@@ -379,3 +379,23 @@ export function statedAsStanding(memberTurn: string): boolean {
 export function isAffirmative(memberTurn: string): boolean {
   return AFFIRMATIVE.test(memberTurn.trim());
 }
+
+/**
+ * A bare no.
+ *
+ * Needed for the same reason as isAffirmative and discovered the harder
+ * way: asked "would you like me to remember that?", a member said "no
+ * thanks" and the model called cancel_booking. They declined a memory
+ * offer and nearly lost their tee time — it survived only because the
+ * model passed a slot id where a booking id was wanted.
+ *
+ * Project 01 hit this on day 6, when "ok go on then" was recorded as a
+ * cancellation. A bare yes or no is meaningless without the question it
+ * answers, and a model asked to infer which one it answers will
+ * sometimes pick the destructive reading.
+ */
+const NEGATIVE = /^(no|nope|nah|no thanks|no thank you|don'?t|do not|rather not|leave it)\b/i;
+
+export function isNegative(memberTurn: string): boolean {
+  return NEGATIVE.test(memberTurn.trim());
+}

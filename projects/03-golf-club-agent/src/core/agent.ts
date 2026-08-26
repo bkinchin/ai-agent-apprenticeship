@@ -48,7 +48,13 @@ import {
   listBookings,
   type BookOutcome,
 } from "../tools/tee-sheet.js";
-import { MemoryStore, isAffirmative, statedAsStanding, type Memory } from "../memory/store.js";
+import {
+  MemoryStore,
+  isAffirmative,
+  isNegative,
+  statedAsStanding,
+  type Memory,
+} from "../memory/store.js";
 import { ask, MODEL, type Answer } from "./answer.js";
 import { loadDocuments, loadStructured } from "./corpus.js";
 
@@ -170,12 +176,40 @@ export type Reply =
    * until they turn up. Generated from the record, the club's existing
    * error-detection loop keeps working.
    */
-  | { kind: "booking"; outcome: BookOutcome }
+  | {
+      kind: "booking";
+      outcome: BookOutcome;
+      /**
+       * The time the MEMBER asked for, so code can notice a swap.
+       *
+       * A member asked for 9:40, found it taken, and was booked at 9:50
+       * with no acknowledgement that they had not got what they asked
+       * for. The confirmation was truthful — it said 09:50 — but a
+       * truthful answer to a question nobody asked is how the day-11
+       * wrong-memory failure worked too.
+       *
+       * The model's explanation lived in a preamble, and preambles are
+       * now suppressed because they make promises the code has not
+       * kept. That fix traded false promises for lost context, so the
+       * context comes back here where it can be checked.
+       */
+      requested?: string;
+    }
   | { kind: "cancelled"; ok: boolean }
   | { kind: "memories"; memories: Memory[] }
   | { kind: "bookings"; bookings: { id: string; slotId: string; guests: number }[] }
   | { kind: "verbatim"; answer: Answer; badCitations: { source: string; why: string }[]; staleSources: { id: string; reviewDue: string }[] }
   | { kind: "error"; text: string }
+  /**
+   * Subordinate to the answer, whatever order the tools ran in.
+   *
+   * A member asked to be booked and read "Would you like me to
+   * remember that — early morning?" BEFORE their confirmation, because
+   * the model happened to call remember_preference first. Tool order is
+   * an implementation detail of one model call; what the member came
+   * for is not. Asides sort last.
+   */
+  | { kind: "aside"; text: string }
   /**
    * Developer-only. Never reaches a member — memberText returns null.
    *
@@ -282,6 +316,12 @@ const TOOLS: Tool[] = [
       type: "object",
       properties: {
         slotId: { type: "string", description: "Exactly as returned by check_availability." },
+        requestedTime: {
+          type: "string",
+          description:
+            "The time the MEMBER asked for, HH:MM, even when you are booking a different " +
+            "one because theirs was taken. Omit only if they never named a time.",
+        },
         partySize: { type: "number", description: "Total players including the member." },
         guests: { type: "number", description: "How many of the party are guests." },
       },
@@ -522,6 +562,48 @@ export async function turn(s: Session, input: string): Promise<Reply[]> {
   s.pendingMemory = undefined;
 
   s.history.push({ role: "user", content: input });
+
+  // A BARE YES OR NO ANSWERS THE QUESTION WE JUST ASKED. CODE DECIDES.
+  //
+  // Asked "would you like me to remember that?", a member replied "no
+  // thanks" and the model called cancel_booking. They declined a memory
+  // offer and nearly lost their tee time; it survived only because the
+  // model passed a slot id where a booking id was wanted.
+  //
+  // The mirror of that failure had already happened in the other
+  // direction — a "yes please" meant for a tee time being spent on a
+  // memory — and both come from the same place: a one-word answer is
+  // meaningless without the question, and a model asked to infer which
+  // question it answers will sometimes pick the destructive reading.
+  //
+  // We know which question was asked, because we asked it. So this
+  // short-circuits before the model is called at all. No inference, no
+  // tool, no cost, and nothing left to misread.
+  if (s.consumable && (isAffirmative(input) || isNegative(input))) {
+    const draft = s.consumable;
+    s.consumable = undefined;
+
+    if (isNegative(input)) {
+      s.history.push({ role: "assistant", content: "No problem — I won't note it down." });
+      return [{ kind: "text", text: "No problem — I won't note it down." }];
+    }
+
+    const r = memory.remember(s.memberId, {
+      type: "preference",
+      key: draft.key,
+      value: draft.value,
+      confidence: 0.95,
+      source: { sessionId: s.sessionId, turnIndex: s.history.length, quote: draft.quote },
+    });
+    const text =
+      "refused" in r
+        ? `I'll keep that in mind for now, but I won't write it down.`
+        : `Noted — I'll remember that.`;
+    s.history.push({ role: "assistant", content: text });
+    s.memories = memory.recall(s.memberId);
+    return [{ kind: "text", text }];
+  }
+
   const out: Reply[] = [];
 
   for (let i = 0; i < MAX_STEPS; i++) {
@@ -561,19 +643,37 @@ export async function turn(s: Session, input: string): Promise<Reply[]> {
 
     s.history.push({ role: "assistant", content: response.content });
 
-    // Any prose the model wrote alongside its tool calls. Usually empty,
-    // and when it is not it is generally the model narrating itself
-    // ("let me check that for you") — which the prompt discourages, but
-    // a prompt is a request, so it is surfaced rather than assumed away.
+    // TEXT ALONGSIDE TOOL CALLS IS A PREAMBLE, NOT A REPLY.
+    //
+    // A member asked to book 9:40 and was told: "Let me book that for
+    // you and save that you like to play early." The save was then
+    // REFUSED by the write policy. The member had been told about
+    // something that never happened.
+    //
+    // The sentence was written in the same message as the tool calls,
+    // before any of them ran — so it is the model narrating its
+    // intentions, and an intention stated before the code has decided
+    // is a claim it has no standing to make. Every one of these is
+    // either noise ("let me check that for you") or a promise about an
+    // outcome nobody knows yet.
+    //
+    // A message with NO tool calls is different: that is the model
+    // narrating a result it has already seen, which is the legitimate
+    // path for reads. So the rule is structural rather than a
+    // judgement about the wording — if the message also calls a tool,
+    // the prose is a preamble and goes to the developer view.
+    const calls = response.content.filter((b) => b.type === "tool_use");
     for (const block of response.content) {
-      if (block.type === "text" && block.text.trim()) {
+      if (block.type !== "text" || !block.text.trim()) continue;
+      if (calls.length > 0) {
+        out.push({ kind: "trace", tool: "(preamble)", args: {}, note: block.text.trim() });
+      } else {
         out.push({ kind: "text", text: block.text.trim() });
       }
     }
 
-    if (response.stop_reason !== "tool_use") return out;
+    if (response.stop_reason !== "tool_use") return ordered(out);
 
-    const calls = response.content.filter((b) => b.type === "tool_use");
     const results: Anthropic.ToolResultBlockParam[] = [];
     let terminated = false;
 
@@ -598,7 +698,7 @@ export async function turn(s: Session, input: string): Promise<Reply[]> {
 
     // Terminal tool: the member has their answer, from the verified
     // object rather than from the model. Stop before another inference.
-    if (terminated) return out;
+    if (terminated) return ordered(out);
   }
 
   // Ran out of steps. Say so rather than returning silence — an agent
@@ -608,8 +708,14 @@ export async function turn(s: Session, input: string): Promise<Reply[]> {
     kind: "error",
     text: "I'm going round in circles on that one — best to ring the pro shop on the number above.",
   });
-  return out;
+  return ordered(out);
 }
+
+/** Asides last. Traces keep their position — they are a developer's timeline. */
+const ordered = (out: Reply[]): Reply[] => [
+  ...out.filter((r) => r.kind !== "aside"),
+  ...out.filter((r) => r.kind === "aside"),
+];
 
 /**
  * Run one tool.
@@ -713,10 +819,11 @@ async function execute(
   }
 
   if (name === "book_tee_time") {
-    const { slotId, partySize, guests } = input as {
+    const { slotId, partySize, guests, requestedTime } = input as {
       slotId: string;
       partySize: number;
       guests: number;
+      requestedTime?: string;
     };
 
     // THE LEDGER CHECK. A prompt asking the model to only book slots it
@@ -744,7 +851,7 @@ async function execute(
         for (const a of outcome.alternatives) s.offered.set(a.slotId, slotParts(a.slotId));
       }
       return {
-        reply: { kind: "booking", outcome },
+        reply: { kind: "booking", outcome, requested: requestedTime },
         forModel:
           outcome.status === "booked"
             ? `Booked. The member has been shown the confirmation from the tee-sheet record. ` +
@@ -797,12 +904,28 @@ async function execute(
     if (!consenting && !statedAsStanding(turnText)) {
       // Not a refusal — an offer. The member described a habit; if it
       // is worth keeping, they can say so.
+      // ASKING AND ARMING ARE ONE ACT.
+      //
+      // The first version told the MODEL to ask. It could not: this
+      // call arrived batched with book_tee_time, which is terminal, so
+      // the turn ended in the same iteration and the instruction went
+      // nowhere. The member was never asked — and pendingMemory was
+      // armed anyway, so a stray "yes" to some later question would
+      // have committed a memory nobody was offered. That is the exact
+      // bug the pending-draft design existed to close, returning
+      // through a different door.
+      //
+      // So code asks, in the same statement that arms it. If we armed
+      // it, we asked. There is no ordering left to get wrong.
       s.pendingMemory = { key, value, quote };
       return {
+        reply: {
+          kind: "aside",
+          text: `Would you like me to remember that for next time — "${value}"?`,
+        },
         forModel:
           `Not stored — the member described a habit rather than asking you to remember it. ` +
-          `Ask them, in a short sentence and ABOUT NOTHING ELSE, whether you should make a ` +
-          `note of it. If they say yes, call this tool again.`,
+          `They have BEEN ASKED whether to note it; say nothing further about it this turn.`,
       };
     }
     const r = memory.remember(s.memberId, {
