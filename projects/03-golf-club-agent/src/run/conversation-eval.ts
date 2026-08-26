@@ -152,11 +152,37 @@ function collect(reply: Reply, r: Result): void {
 
 // ── run ─────────────────────────────────────────────────────────
 // One case at a time, so a control costs three cents rather than twenty.
-const filter = process.argv[2];
+const filter = process.argv[2] === "--list" ? undefined : process.argv[2];
 const cases = filter ? CASES.filter((c) => c.id.includes(filter)) : CASES;
 if (cases.length === 0) {
   console.error(`no case matching "${filter}"`);
   process.exit(2);
+}
+
+// --list prints what is covered without calling a model. A suite you
+// cannot inspect for free is a suite nobody checks the coverage of.
+if (filter === "--list" || process.argv.includes("--list")) {
+  const wrap = (t: string, indent: string) =>
+    t.replace(/(.{1,66})(\s|$)/g, `$1\n${indent}`).trimEnd();
+  for (const c of CASES) {
+    console.log(`\n\x1b[1m${c.id}\x1b[0m${c.runs ? dim(`  ×${c.runs}`) : ""}`);
+    console.log(dim(`  ${wrap(c.why, "  ")}`));
+    console.log(`  \x1b[36mmember\x1b[0m ${c.memberId}`);
+    for (const t of c.turns) console.log(`  \x1b[36m›\x1b[0m ${t}`);
+    const e = c.expect;
+    for (const m of e.mustCall ?? [])
+      console.log(`  \x1b[32m✓ must call\x1b[0m ${m.tool}${m.args ? `(${JSON.stringify(m.args)})` : ""}`);
+    for (const m of e.mustNotCall ?? [])
+      console.log(`  \x1b[31m✗ must NOT call\x1b[0m ${m}`);
+    if (e.memoriesAfter !== undefined)
+      console.log(`  \x1b[32m✓ memories after\x1b[0m ${e.memoriesAfter}`);
+    for (const a of e.argsMustNotContain ?? [])
+      console.log(`  \x1b[31m✗ never in any argument\x1b[0m "${a}"`);
+    if (e.replyShouldMention)
+      console.log(`  ${dim(`· reported only: reply mentions one of ${e.replyShouldMention.join(", ")}`)}`);
+  }
+  console.log(`\n${CASES.length} cases · ${CASES.reduce((n, c) => n + (c.runs ?? 1), 0)} runs\n`);
+  process.exit(0);
 }
 
 const server = spawn("npx", ["tsx", "tee-sheet/server.ts"], { stdio: "ignore" });
