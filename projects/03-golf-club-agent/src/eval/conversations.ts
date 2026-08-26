@@ -75,8 +75,12 @@ export const CASES: ConversationCase[] = [
       "and was booked for four with three guests — $60 of fees nobody agreed to. The slot " +
       "ledger did not catch it: it constrains which slot, never who.",
     memberId: "M-1001",
+    // SUNDAY, not Saturday: Saturday 08:30-11:00 is the competition
+    // window and is now correctly refused, which invalidated this
+    // fixture the moment that guard was added. The case is about party
+    // size, so it must not also be testing the closure.
     turns: [
-      "what's free saturday the 29th around 9?",
+      "what's free sunday the 30th around 9?",
       "the 9:20 one, just me. I usually play early with the same three lads",
     ],
     // Probabilistic, like the cancellation one: this passed a full
@@ -95,8 +99,9 @@ export const CASES: ConversationCase[] = [
       "today makes that more likely, not less. A member bringing two guests must get " +
       "them, and must be told what they cost before they arrive and find out.",
     memberId: "M-1001",
+    // Sunday, for the same reason as party-size/just-me.
     turns: [
-      "what's free saturday the 29th around 9?",
+      "what's free sunday the 30th around 9?",
       "the 9:20 please — me and two guests",
     ],
     expect: {
@@ -108,13 +113,42 @@ export const CASES: ConversationCase[] = [
     },
   },
   {
+    id: "slots/competition-window-is-not-bookable",
+    why:
+      "A member asked for Saturday 9am and was booked, straight into the club competition " +
+      "window. Day 9 found this rule being ANSWERED wrongly and fixed it in the corpus — so " +
+      "the knowledge agent states it correctly and the booking path never learned. A corpus " +
+      "correction cannot reach a code path, and the failure it prevented (a member driving " +
+      "to a closed tee sheet) was still live two days later.",
+    memberId: "M-1002",
+    turns: ["can I book saturday the 29th at 9am, just me?"],
+    expect: {
+      mustNotCall: ["book_tee_time"],
+      replyMustContain: ["competition"],
+    },
+  },
+  {
+    id: "slots/a-mistyped-weekday-is-not-a-different-day",
+    why:
+      '"Can I book for staturday 9am" was resolved by the model to Sunday 30 August. It ' +
+      "asked before booking, which is the right instinct, but it had already looked up the " +
+      "wrong day and a member answering yes would have been booked one out. Day 11 gave the " +
+      "model today's date, which fixed the YEAR and left the DAY.",
+    memberId: "M-1003",
+    turns: ["can I book for staturday the 29th at 11:30, just me?"],
+    expect: {
+      mustCall: [{ tool: "book_tee_time", args: { slotId: "2026-08-29T11:30" } }],
+      argsMustNotContain: ["2026-08-30"],
+    },
+  },
+  {
     id: "memory/habit-is-not-an-instruction",
     why:
       'An aside — "I usually play early" — was stored as a preference, including an ' +
       "inferred one about group size, which would then bias every future booking toward " +
       "four players. A wrong memory does not sit still; it reproduces.",
     memberId: "M-1002",
-    turns: ["book me saturday the 29th at 9:40, just me. I usually play early"],
+    turns: ["book me sunday the 30th at 9:40, just me. I usually play early"],
     expect: {
       memoriesAfter: 0,
       mustCall: [{ tool: "book_tee_time", args: { partySize: 1, guests: 0 } }],
@@ -128,7 +162,7 @@ export const CASES: ConversationCase[] = [
       "id was wanted. Project 01 hit the same shape on day 6.",
     memberId: "M-1003",
     turns: [
-      "book me saturday the 29th at 9:40, just me. I usually play early",
+      "book me sunday the 30th at 9:40, just me. I usually play early",
       "no thanks",
     ],
     // Repeated because the failure it guards is probabilistic — see

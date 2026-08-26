@@ -60,6 +60,7 @@ import {
   statedAsStanding,
   type Memory,
 } from "../memory/store.js";
+import { closedFor, closuresFrom, weekdayNamed, weekdayOf } from "./slots.js";
 import { memberSentence, memoryOfferText } from "./render.js";
 import { ask, MODEL, type Answer } from "./answer.js";
 import { loadDocuments, loadStructured } from "./corpus.js";
@@ -70,6 +71,7 @@ const client = new Anthropic();
 // seven files per turn is work with no purchaser.
 const docs = loadDocuments();
 const structured = loadStructured();
+const closures = closuresFrom(structured);
 
 /**
  * WRITE POLICY: EXPLICIT ONLY.
@@ -1201,8 +1203,42 @@ async function execute(
     const problem = dateProblem(date);
     if (problem) return { forModel: `Refused: ${problem} Ask the member which date they mean.` };
 
+    // THE MEMBER NAMED A WEEKDAY. THE DATE MUST BE THAT WEEKDAY.
+    //
+    // "Can I book for staturday 9am" was resolved to Sunday 30 August.
+    // The model asked before booking, which is the right instinct, but
+    // it had already looked up the wrong day and a "yes" would have
+    // booked one out. Day 11 gave the model today's date, which fixed
+    // the YEAR and left the DAY.
+    const named = weekdayNamed(lastMemberTurn(s));
+    const actual = weekdayOf(date);
+    if (named && actual && named !== actual) {
+      return {
+        ok: false,
+        forModel:
+          `Refused: they said ${named} and ${date} is a ${actual}. Work out the right ` +
+          `date for the next ${named} and call this again — do not ask them to confirm a ` +
+          `date they did not give you.`,
+      };
+    }
+
     try {
-      const { slots } = await checkAvailability(date, from ?? "00:00", to ?? "23:59");
+      const { slots: raw } = await checkAvailability(date, from ?? "00:00", to ?? "23:59");
+
+      // CLOSED SLOTS ARE FILTERED OUT, NOT REFUSED LATER.
+      //
+      // The booking guard below would reject a competition-window slot,
+      // but by then the member has been offered six times they cannot
+      // have and has picked one. Refusing an offer you made is a worse
+      // experience than never making it — and the pattern all week has
+      // been to remove the capability rather than catch the mistake.
+      //
+      // The tee sheet returns these because it does not know the rule;
+      // the rule lives in booking-rules.yaml. That split is the whole
+      // reason this filter exists here rather than there.
+      const slots = raw.filter((sl) => !closedFor(sl.slotId, closures));
+      const removed = raw.length - slots.length;
+
       // EVERY OFFERED SLOT GOES IN THE LEDGER, including the ones the
       // model chooses not to mention. If the tee sheet offered it, the
       // member may name it.
@@ -1212,10 +1248,15 @@ async function execute(
         // this says Friday, the model can see the mismatch — it could
         // not before, because a bare ISO date carries no day name.
         forModel:
-          slots.length === 0
+          (removed > 0
+            ? `NOTE: ${removed} slot(s) hidden — the tee sheet is closed then ` +
+              `(${closures.map((c) => `${c.day} ${c.from}-${c.to}, ${c.reason}`).join("; ")}). ` +
+              `Say so if it is relevant to what they asked for. `
+            : "") +
+          (slots.length === 0
             ? `No free slots on ${weekday(date)} ${date} in that window.`
             : `Free slots on ${weekday(date)} ${date}: ` +
-              slots.map((x) => `${x.time} (${x.slotId})`).join(", "),
+              slots.map((x) => `${x.time} (${x.slotId})`).join(", ")),
       };
     } catch (e) {
       return { forModel: `The tee sheet is unavailable: ${(e as Error).message}. Do not guess.` };
@@ -1298,6 +1339,31 @@ async function execute(
       // does — the member's literal words — so it uses them.
       party = 1;
       guestCount = 0;
+    }
+
+    // THE TEE SHEET IS SHUT AT THIS TIME.
+    //
+    // booking-rules.yaml closes Saturday 08:30–11:00 for the club
+    // competition, and the fake tee sheet — like the real Google Sheet
+    // — will happily return those slots and accept a booking for them.
+    // listCompetitions() has existed since day 10 and has never been
+    // called by anything.
+    //
+    // Day 9 found this rule being answered WRONGLY and fixed it in the
+    // corpus, so the knowledge agent states it correctly. The booking
+    // path never learned. A corpus correction cannot reach a code path,
+    // and the failure it was preventing — a member driving to a closed
+    // tee sheet — was still live two days later.
+    const shut = closedFor(slotId, closures);
+    if (shut) {
+      return {
+        ok: false,
+        detail: `${shut.reason.toLowerCase()} — sheet closed ${shut.from}–${shut.to}`,
+        forModel:
+          `Refused: ${slotId} is inside the ${shut.reason} window (${shut.day} ` +
+          `${shut.from}–${shut.to}), when the tee sheet is closed to general booking. ` +
+          `Tell the member and offer a time outside it.`,
+      };
     }
 
     // THE LEDGER CHECK. A prompt asking the model to only book slots it
