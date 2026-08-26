@@ -12,7 +12,8 @@
     "reliability": "tsx src/run/reliability.ts",
     "degraded": "tsx --env-file=../../.env.local src/run/degraded.ts",
     "chat": "tsx --env-file=../../.env.local src/run/chat.ts",
-    "memory-value": "tsx --env-file=../../.env.local src/run/memory-value.ts"
+    "memory-value": "tsx --env-file=../../.env.local src/run/memory-value.ts",
+    "conversations": "tsx --env-file=../../.env.local src/run/conversation-eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.0",

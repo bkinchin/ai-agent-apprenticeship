@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MemoryStore, isAffirmative, statedAsStanding, excludedBy } from "./store.js";
+import { MemoryStore, isAffirmative, saidTheyArePlayingAlone, statedAsStanding, excludedBy } from "./store.js";
 
 const NOW = new Date("2026-08-21T10:00:00Z");
 const src = (quote: string) => ({ sessionId: "S-1", turnIndex: 0, quote });
@@ -234,4 +234,28 @@ test("the exclusion list cannot see a category the model trimmed away", () => {
 
   assert.equal(excludedBy(said), "health", "the full turn is caught");
   assert.equal(excludedBy(trimmed), undefined, "the trimmed quote is not, and cannot be");
+});
+
+// ═══ "just me" ════════════════════════════════════════════════════
+test("a solo statement is recognised", () => {
+  for (const t of [
+    "the 9:20, just me. I usually play early with the same three lads",
+    "book me in for saturday, only me",
+    "just myself this time",
+  ]) {
+    assert.ok(saidTheyArePlayingAlone(t), `should be solo: "${t}"`);
+  }
+});
+
+test("but not when they name company in the same breath", () => {
+  // "just me and my wife" is two people. The guard must not force it
+  // to one and refuse a booking the member actually asked for.
+  for (const t of [
+    "just me and my wife",
+    "just me + a guest",
+    "only me and two mates",
+    "just me, and my son",
+  ]) {
+    assert.equal(saidTheyArePlayingAlone(t), false, `should NOT be solo: "${t}"`);
+  }
 });

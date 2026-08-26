@@ -53,6 +53,7 @@ import {
   excludedBy,
   isAffirmative,
   isNegative,
+  saidTheyArePlayingAlone,
   statedAsStanding,
   type Memory,
 } from "../memory/store.js";
@@ -726,7 +727,22 @@ export async function turn(
       out.push({ kind: "trace", tool: call.name, args: call.input, note: forModel });
       if (reply) out.push(reply);
       results.push({ type: "tool_result", tool_use_id: call.id, content: forModel });
-      if (TERMINAL.has(call.name)) terminated = true;
+
+      // A TOOL IS TERMINAL BECAUSE IT ANSWERED THE MEMBER, NOT BECAUSE
+      // OF ITS NAME.
+      //
+      // book_tee_time is terminal, so a REFUSED booking ended the turn
+      // too: the solo guard caught "just me" being booked as four,
+      // returned a refusal telling the model to book it as one — and
+      // the turn stopped before the model could read it. The member got
+      // no booking at all, which is worse than the wrong one the guard
+      // was preventing.
+      //
+      // A guard that turns a bad outcome into no outcome has not
+      // helped. The reply is the signal: if the tool produced something
+      // for the member, the turn is done; if it only produced an
+      // instruction for the model, the model must get to act on it.
+      if (TERMINAL.has(call.name) && reply) terminated = true;
     }
 
     // THE TOOL RESULT IS RECORDED EVEN WHEN THE TURN ENDS HERE.
@@ -869,6 +885,31 @@ async function execute(
       requestedTime?: string;
     };
 
+    // "JUST ME" IS NOT A SUGGESTION.
+    //
+    // A member said "the 9:20, just me. I usually play early with the
+    // same three lads" and was booked as four with three guests — $60
+    // of fees nobody agreed to. The model read a description of a
+    // HABIT as the party for THIS booking: the same conflation the
+    // memory write policy exists to stop, arriving on the side that
+    // costs money.
+    //
+    // The confirmation already names the party and the fee, so the
+    // member can object. That is detection, and it is not a substitute
+    // for this: by the time they object the booking is on the sheet
+    // and the guest allowance is spent.
+    //
+    // Read from the MEMBER'S TURN, like every other guard here, and
+    // never from the arguments the model chose.
+    if (saidTheyArePlayingAlone(lastMemberTurn(s)) && (partySize > 1 || guests > 0)) {
+      return {
+        forModel:
+          `Refused: they said they are playing on their own, and you asked for ` +
+          `${partySize} players and ${guests} guests. If they mentioned other people it was ` +
+          `about how they usually play, not this booking. Book it as one player, or ask them.`,
+      };
+    }
+
     // THE LEDGER CHECK. A prompt asking the model to only book slots it
     // was shown is a request; this is a guarantee. It stops both a
     // transcription slip and a slot the model reasoned "should" be free.
@@ -965,6 +1006,22 @@ async function execute(
     if (!consenting && !statedAsStanding(turnText)) {
       // Not a refusal — an offer. The member described a habit; if it
       // is worth keeping, they can say so.
+      // ONE OFFER PER TURN.
+      //
+      // Told "just me. I usually play early with the same three lads",
+      // the model proposed two memories and the member was asked two
+      // questions with one slot to answer them — and the second
+      // proposal overwrote the first, so a "yes" would have committed
+      // whichever the model happened to send last. That is the bare-
+      // affirmative ambiguity again, manufactured by us this time.
+      if (s.pendingMemory) {
+        return {
+          forModel:
+            `Not stored, and do not offer again this turn — you have already asked them ` +
+            `about one thing. If they say yes you can raise the other next time.`,
+        };
+      }
+
       // ASKING AND ARMING ARE ONE ACT.
       //
       // The first version told the MODEL to ask. It could not: this

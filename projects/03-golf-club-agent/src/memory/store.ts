@@ -399,3 +399,26 @@ const NEGATIVE = /^(no|nope|nah|no thanks|no thank you|don'?t|do not|rather not|
 export function isNegative(memberTurn: string): boolean {
   return NEGATIVE.test(memberTurn.trim());
 }
+
+/**
+ * Did the member say they are playing alone?
+ *
+ * "the 9:20, just me. I usually play early with the same three lads"
+ * was booked as four players with three guests — $60 of fees nobody
+ * agreed to. The model read a description of a HABIT as the party for
+ * THIS booking, which is the same conflation the memory write policy
+ * exists to stop, arriving on the side that costs money.
+ *
+ * The confirmation was changed to name the party and the fee, so the
+ * member can object. That is DETECTION. This is prevention, and the
+ * two are not substitutes: by the time they object, the booking is on
+ * the sheet and the guest allowance is spent.
+ *
+ * The negative lookahead matters. "just me and my wife" is two people
+ * and must not match; "just me. I usually play with three lads" is one.
+ */
+const SOLO = /\b(just|only)\s+(me|myself)\b(?!\s*(and|&|\+|,\s*(and|plus)))/i;
+
+export function saidTheyArePlayingAlone(memberTurn: string): boolean {
+  return SOLO.test(memberTurn);
+}

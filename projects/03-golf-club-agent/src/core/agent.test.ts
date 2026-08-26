@@ -208,3 +208,24 @@ test("the loop stops at MAX_STEPS and says so rather than going silent", async (
   assert.ok(m.calls() <= 6, `must not exceed the ceiling (was ${m.calls()})`);
   assert.ok(shown(out).some((r) => r.kind === "error"), "and must tell the member something");
 });
+
+test("a REFUSED terminal tool does not end the turn", async () => {
+  // book_tee_time is terminal, so a refused booking ended the turn on
+  // the strength of the tool's NAME: the solo guard caught "just me"
+  // being booked as four, told the model to book it as one, and the
+  // turn stopped before the model could read it. The member got no
+  // booking at all — worse than the wrong one being prevented.
+  const m = scripted(
+    // refused by the solo guard: the member said "just me"
+    { content: [call("book_tee_time", { slotId: "x", partySize: 4, guests: 3 })],
+      stop_reason: "tool_use" },
+    { content: [call("end_turn", { message: "Booked as one." })], stop_reason: "tool_use" },
+  );
+  const out = await turn(member(), "book me the 9:20, just me", m.fn);
+
+  assert.equal(m.calls(), 2, "the model must get to act on the refusal");
+  assert.ok(
+    shown(out).some((r) => r.kind === "text" && /Booked as one/.test(r.text)),
+    "and the member must end up with an answer",
+  );
+});
