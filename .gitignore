@@ -38,3 +38,6 @@ eval-findings/
 
 # day-10 idempotency store (runtime state)
 .idempotency.json
+
+# day-11 memory store (runtime state, and personal data)
+.memory.db

@@ -48,6 +48,7 @@ import {
   listBookings,
   type BookOutcome,
 } from "../tools/tee-sheet.js";
+import { MemoryStore, isAffirmative, statedAsStanding, type Memory } from "../memory/store.js";
 import { ask, MODEL, type Answer } from "./answer.js";
 import { loadDocuments, loadStructured } from "./corpus.js";
 
@@ -57,6 +58,26 @@ const client = new Anthropic();
 // seven files per turn is work with no purchaser.
 const docs = loadDocuments();
 const structured = loadStructured();
+
+/**
+ * WRITE POLICY: EXPLICIT ONLY.
+ *
+ * Day 11 lists four policies. This is the first one — nothing is stored
+ * unless the member asks for it in so many words.
+ *
+ * It has the lowest recall of the four and it is still the right start.
+ * End-of-session extraction produces a store full of things somebody
+ * said once in irritation, and every one of those becomes an unverified
+ * assertion injected into all their future conversations. Precision
+ * matters more than recall here because the cost is asymmetric: a
+ * missed preference is a small inconvenience the member can restate,
+ * and a wrong one is the agent confidently acting on a belief the
+ * member never held and cannot see.
+ *
+ * It is also the only policy with ZERO SURPRISE, which is most of what
+ * separates a memory that feels useful from one that feels creepy.
+ */
+export const memory = new MemoryStore();
 
 export interface Session {
   memberId: string;
@@ -88,6 +109,35 @@ export interface Session {
    * Detection is what you build when prevention is unavailable.
    */
   offered: Map<string, { date: string; time: string }>;
+  /**
+   * Loaded once, at the start of the session, not per turn.
+   *
+   * A memory that changes mid-conversation because the member just
+   * created it would have the agent reacting to its own writes.
+   * Refreshed explicitly when the member changes something.
+   */
+  memories: Memory[];
+  /**
+   * A memory the agent offered to store, waiting on a yes.
+   *
+   * HELD IN CODE, NOT IN THE MODEL'S HEAD. The first version let a
+   * bare affirmative unlock any write, on the reasoning that the model
+   * would only ask immediately before storing. It did not: asked "will
+   * 9:30 work, or would you prefer 9:10?", the member said "yes
+   * please", and the model spent that yes on a preference quoted from
+   * a turn earlier. The member agreed to a tee time and got a memory.
+   *
+   * So the draft lives here. An affirmative commits THIS, or nothing —
+   * the model cannot substitute what it would rather store, and a yes
+   * meant for something else has nothing to unlock unless we actually
+   * asked.
+   *
+   * It survives exactly one turn. A proposal the member walked past is
+   * not consent they gave later.
+   */
+  pendingMemory?: { key: string; value: string; quote: string };
+  /** This turn's view of pendingMemory, snapshotted at the top of turn(). */
+  consumable?: { key: string; value: string; quote: string };
 }
 
 export const newSession = (memberId: string): Session => ({
@@ -96,6 +146,7 @@ export const newSession = (memberId: string): Session => ({
   step: 0,
   history: [],
   offered: new Map(),
+  memories: memory.recall(memberId),
 });
 
 /**
@@ -121,6 +172,7 @@ export type Reply =
    */
   | { kind: "booking"; outcome: BookOutcome }
   | { kind: "cancelled"; ok: boolean }
+  | { kind: "memories"; memories: Memory[] }
   | { kind: "bookings"; bookings: { id: string; slotId: string; guests: number }[] }
   | { kind: "verbatim"; answer: Answer; badCitations: { source: string; why: string }[]; staleSources: { id: string; reviewDue: string }[] }
   | { kind: "error"; text: string }
@@ -156,6 +208,8 @@ const MAX_STEPS = 6;
 const TERMINAL = new Set([
   "search_knowledge",
   "end_turn",
+  // Memory is shown from the store, not described by the model.
+  "show_what_you_know",
   // WRITES ARE REPORTED BY CODE, NOT NARRATED BY THE MODEL.
   //
   // `check_availability` is deliberately NOT here: availability is
@@ -247,6 +301,63 @@ const TOOLS: Tool[] = [
     },
   },
   {
+    name: "remember_preference",
+    description:
+      "Store a preference the member has EXPLICITLY asked you to remember — " +
+      "\"remember that I...\", \"I always...\", \"from now on...\". " +
+      "Never call this because a preference seemed implied by what they booked. " +
+      "Preferences only: how they like to be contacted, what times they like to play, " +
+      "how they usually play. Never anything about their health, their finances, their " +
+      "family, or another person.",
+    input_schema: {
+      type: "object",
+      properties: {
+        key: {
+          type: "string",
+          description:
+            "A stable snake_case name for the KIND of preference, so a later statement " +
+            "replaces this one: preferred_tee_time, contact_method, group_size, buggy.",
+        },
+        value: { type: "string", description: "One short phrase. 'before 09:00'." },
+        quote: {
+          type: "string",
+          description: "The member's own words, verbatim. Required — this is what we show them.",
+        },
+      },
+      required: ["key", "value", "quote"],
+    },
+  },
+  {
+    name: "show_what_you_know",
+    description:
+      "Everything remembered about this member, shown to them directly with dates and " +
+      "their own words. Use for \"what do you know about me?\". Do not summarise it after.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "update_what_you_know",
+    description:
+      "Correct or delete one remembered preference. Use the key from show_what_you_know.",
+    input_schema: {
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        value: {
+          type: "string",
+          description: "The corrected value, or the exact word FORGET to delete it.",
+        },
+      },
+      required: ["key", "value"],
+    },
+  },
+  {
+    name: "forget_everything",
+    description:
+      "Delete everything remembered about this member. Only when they clearly ask for all " +
+      "of it to go. Irreversible.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "end_turn",
     // THE ESCAPE HATCH, AND WHY IT DOES NOT REOPEN THE HOLE.
     //
@@ -301,7 +412,7 @@ const TOOLS: Tool[] = [
  * up overnight would otherwise serve yesterday's date to tomorrow's
  * members, which is the same bug with a slower fuse.
  */
-const systemPrompt = (): string => {
+const systemPrompt = (s: Session): string => {
   const today = new Date();
   const fmt = (d: Date) =>
     d.toLocaleDateString("en-AU", {
@@ -330,8 +441,37 @@ not restate what you think it said. Call the tool; the turn ends there.
 
 If a question is not about the club at all, say so briefly.
 
-Be warm and short. Members are usually on a phone.`;
+Be warm and short. Members are usually on a phone.
+${recalled(s)}`;
 };
+
+/**
+ * Memory, framed as fallible — which is the whole point of the format.
+ *
+ * Presented as fact, a model acts on a stale belief with the same
+ * confidence it acts on a tool result. The dates and the caveat are not
+ * decoration; they measurably change what it does with a preference
+ * from eleven months ago, and they are what lets it say "you mentioned
+ * in March that..." rather than asserting it.
+ *
+ * Budgeted at 8 by the store's own default. An unbounded injection is
+ * an unbounded prompt, and the memories least worth having are the ones
+ * that would be added last.
+ */
+function recalled(s: Session): string {
+  if (s.memories.length === 0) return "";
+  const lines = s.memories.map((m) => {
+    const when = new Date(m.lastConfirmedAt).toLocaleDateString("en-AU", {
+      day: "numeric", month: "short", year: "numeric", timeZone: "Australia/Sydney",
+    });
+    return `- ${m.value} (they told us on ${when})`;
+  });
+  return `
+What you know about this member from previous conversations. It MAY BE OUT OF
+DATE and none of it has been verified — check anything that matters before
+acting on it, and never state it as fact:
+${lines.join("\n")}`;
+}
 
 const weekday = (isoDate: string): string => {
   const [y, m, d] = isoDate.split("-").map(Number);
@@ -355,6 +495,20 @@ export function dateProblem(isoDate: string, now = new Date()): string | undefin
   return undefined;
 }
 
+/**
+ * The member's own words this turn, ignoring tool results.
+ *
+ * history holds tool_result blocks under role "user" as well, so the
+ * last entry is usually not a person speaking.
+ */
+function lastMemberTurn(s: Session): string {
+  for (let i = s.history.length - 1; i >= 0; i--) {
+    const m = s.history[i];
+    if (m?.role === "user" && typeof m.content === "string") return m.content;
+  }
+  return "";
+}
+
 /** "2026-08-23T09:20" → { date, time }. The tee sheet's slot IDs are self-describing. */
 const slotParts = (slotId: string) => {
   const [date, time] = slotId.split("T");
@@ -363,6 +517,10 @@ const slotParts = (slotId: string) => {
 
 /** One member turn. Returns everything the member should see, in order. */
 export async function turn(s: Session, input: string): Promise<Reply[]> {
+  // Snapshot and clear: a proposal is answerable for one turn only.
+  s.consumable = s.pendingMemory;
+  s.pendingMemory = undefined;
+
   s.history.push({ role: "user", content: input });
   const out: Reply[] = [];
 
@@ -370,7 +528,7 @@ export async function turn(s: Session, input: string): Promise<Reply[]> {
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 1024,
-      system: systemPrompt(),
+      system: systemPrompt(s),
       tools: TOOLS,
       // THE MODEL DOES NOT GET TO DECIDE WHETHER A QUESTION IS IN SCOPE.
       //
@@ -620,6 +778,114 @@ async function execute(
         forModel: `The cancellation failed and may or may not have landed. Do not retry.`,
       };
     }
+  }
+
+  if (name === "remember_preference") {
+    const { key, value, quote } = input as { key: string; value: string; quote: string };
+
+    // THE WRITE POLICY, ENFORCED IN CODE.
+    //
+    // Checked against what the MEMBER said this turn, never against the
+    // quote the model supplied — the model chooses that quote, so
+    // checking it would be marking its own homework.
+    const turnText = lastMemberTurn(s);
+
+    // A yes commits the draft WE held, not the one the model sent now.
+    const consenting = isAffirmative(turnText) && s.consumable;
+    const draft = consenting ? s.consumable! : { key, value, quote };
+
+    if (!consenting && !statedAsStanding(turnText)) {
+      // Not a refusal — an offer. The member described a habit; if it
+      // is worth keeping, they can say so.
+      s.pendingMemory = { key, value, quote };
+      return {
+        forModel:
+          `Not stored — the member described a habit rather than asking you to remember it. ` +
+          `Ask them, in a short sentence and ABOUT NOTHING ELSE, whether you should make a ` +
+          `note of it. If they say yes, call this tool again.`,
+      };
+    }
+    const r = memory.remember(s.memberId, {
+      type: "preference",
+      key: draft.key,
+      value: draft.value,
+      // Explicit statements are the only ones stored, so confidence is
+      // high by construction. It is not 1.0 because the model still
+      // paraphrased the member into a key and a value, and that step
+      // can be wrong even when the member was clear.
+      confidence: 0.95,
+      source: { sessionId: s.sessionId, turnIndex: s.history.length, quote: draft.quote },
+    });
+
+    if ("refused" in r) {
+      // NOT AN ERROR, and not something to apologise for. The member
+      // said something they are entitled to say; we simply do not keep
+      // it. Telling them plainly is better than silently not storing
+      // it and letting them believe we did.
+      return {
+        reply: {
+          kind: "text",
+          text:
+            `I'll help with that now, but I won't write it down — it touches on something ` +
+            `personal and we don't keep records of that sort of thing.`,
+        },
+        forModel: `Refused (${r.refused}). Help them THIS TURN but do not retry storing it.`,
+      };
+    }
+
+    s.consumable = undefined;
+    s.memories = memory.recall(s.memberId);
+    return { forModel: `Stored: ${draft.key} = ${draft.value}. Confirm briefly and naturally.` };
+  }
+
+  if (name === "show_what_you_know") {
+    s.memories = memory.recall(s.memberId);
+    return {
+      reply: { kind: "memories", memories: s.memories },
+      forModel:
+        s.memories.length === 0
+          ? `Nothing stored. The member has been told.`
+          : `Shown to the member with dates and their own words. Do not restate it. ` +
+            `Keys, for your own use: ${s.memories.map((m) => m.key).join(", ")}`,
+    };
+  }
+
+  if (name === "update_what_you_know") {
+    const { key, value } = input as { key: string; value: string };
+    const target = memory.recall(s.memberId).find((m) => m.key === key);
+    if (!target) return { forModel: `No memory with key "${key}". Call show_what_you_know.` };
+
+    const gone = value.trim().toUpperCase() === "FORGET";
+    const ok = gone
+      ? memory.forget(s.memberId, target.id)
+      : memory.correct(s.memberId, target.id, value);
+    s.memories = memory.recall(s.memberId);
+
+    if (!ok) {
+      return {
+        reply: { kind: "text", text: `I can't record that one, but I've noted what you said.` },
+        forModel: `Refused. Do not retry.`,
+      };
+    }
+    return {
+      reply: { kind: "text", text: gone ? `Done — I've forgotten that.` : `Updated — thanks.` },
+      forModel: gone ? `Deleted "${key}".` : `Corrected "${key}" to "${value}".`,
+    };
+  }
+
+  if (name === "forget_everything") {
+    const n = memory.forgetAll(s.memberId);
+    s.memories = [];
+    return {
+      reply: {
+        kind: "text",
+        text:
+          n === 0
+            ? `There was nothing stored, so there's nothing to delete.`
+            : `Done — ${n} thing${n === 1 ? "" : "s"} deleted. I don't know anything about you now.`,
+      },
+      forModel: `Erased ${n} memories. You now know nothing about this member.`,
+    };
   }
 
   if (name === "end_turn") {

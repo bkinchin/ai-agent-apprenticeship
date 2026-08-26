@@ -56,6 +56,19 @@ export function contactsFrom(structured: Record<string, unknown>): Record<string
 }
 
 /**
+ * The guest fee, from fees.yaml.
+ *
+ * Read rather than hardcoded for the same reason the phone number is:
+ * every club fact a member reads comes from the corpus. It was raised
+ * from $15 to $20 in April and several documents still say $15, which
+ * is precisely why a literal in source would be wrong within months.
+ */
+export function guestFeeFrom(structured: Record<string, unknown>): number | undefined {
+  const fees = structured["fees.yaml"] as { guest?: { green_fee?: number } } | undefined;
+  return fees?.guest?.green_fee;
+}
+
+/**
  * "2026-08-23" → "Saturday 23 August".
  *
  * UTC throughout, deliberately. Constructing a local Date from a
@@ -91,7 +104,11 @@ const reachable = (c: Contact | undefined): string =>
  * exists only as a diagnostic. The caller decides what to do with
  * silence; this function does not invent something to fill it.
  */
-export function memberText(r: Reply, contacts: Record<string, Contact>): string | null {
+export function memberText(
+  r: Reply,
+  contacts: Record<string, Contact>,
+  guestFee?: number,
+): string | null {
   if (r.kind === "trace") return null; // developer channel. never a member's.
   if (r.kind === "text") return r.text;
 
@@ -114,8 +131,32 @@ export function memberText(r: Reply, contacts: Record<string, Contact>): string 
   if (r.kind === "booking") {
     const o = r.outcome;
     if (o.status === "booked") {
-      const { date, time } = { date: o.slotId.split("T")[0] ?? "", time: o.time };
-      return `You're booked — ${niceDate(date)} at ${time}. Your reference is ${o.bookingId}.`;
+      const date = o.slotId.split("T")[0] ?? "";
+      // SAY WHO, NOT JUST WHEN.
+      //
+      // The first version confirmed the date, the time and a reference,
+      // and said nothing about the party. A member who asked for "just
+      // me" and was booked for four with three guests read "You're
+      // booked — Saturday 29 August at 09:20" and would have found out
+      // about the other three, and the $60, at the first tee.
+      //
+      // The confirmation must name every field the member could
+      // disagree with. Those are exactly the fields that cost money and
+      // exactly the ones the model gets wrong.
+      const who =
+        o.guests > 0
+          ? `${o.partySize} players including ${o.guests} guest${o.guests > 1 ? "s" : ""}`
+          : o.partySize > 1
+            ? `${o.partySize} players`
+            : `just you`;
+      const fee =
+        o.guests > 0 && guestFee
+          ? ` Guest fees come to $${o.guests * guestFee} on your account.`
+          : "";
+      return (
+        `You're booked — ${niceDate(date)} at ${o.time}, ${who}.${fee} ` +
+        `Your reference is ${o.bookingId}.`
+      );
     }
     if (o.status === "slot_taken") {
       // A conflict is a conversation, not an exception. And it says WHY:
@@ -153,6 +194,33 @@ export function memberText(r: Reply, contacts: Record<string, Contact>): string 
       return `  · ${niceDate(date ?? "")} at ${time}${guests} — ${b.id}`;
     });
     return `You've got ${r.bookings.length === 1 ? "one booking" : `${r.bookings.length} bookings`}:\n${lines.join("\n")}`;
+  }
+
+  if (r.kind === "memories") {
+    // WHAT MAKES THIS HELPFUL RATHER THAN UNSETTLING.
+    //
+    // Not the list — the PROVENANCE. "We think you prefer mornings" is
+    // surveillance; "you told us on 3 March: I'd always rather play
+    // before nine" is a receipt. The member can see we did not deduce
+    // it, work out why it is there, and correct it knowing what they
+    // are correcting.
+    //
+    // Also why the whole list is shown rather than a summary: a
+    // summary of what you know about someone, given to that person, is
+    // a way of not telling them.
+    if (r.memories.length === 0) {
+      return `I don't know anything about you beyond what's in this conversation — I only remember things you ask me to.`;
+    }
+    const items = r.memories.map((m) => {
+      const when = new Date(m.lastConfirmedAt).toLocaleDateString("en-AU", {
+        day: "numeric", month: "long", year: "numeric", timeZone: "Australia/Sydney",
+      });
+      return `  · ${m.value}\n    you said on ${when}: "${m.source.quote}"`;
+    });
+    return (
+      `Here's everything I've got written down about you:\n\n${items.join("\n\n")}\n\n` +
+      `Tell me if any of it's wrong, or say the word and I'll delete the lot.`
+    );
   }
 
   const a = r.answer;
@@ -208,6 +276,10 @@ export function devLines(r: Reply): string[] {
   if (r.kind === "booking") out.push(`tee sheet: ${JSON.stringify(r.outcome)}`);
   if (r.kind === "cancelled") out.push(`tee sheet: cancelled=${r.ok}`);
   if (r.kind === "bookings") out.push(`tee sheet: ${r.bookings.length} booking(s)`);
+  if (r.kind === "memories") {
+    for (const m of r.memories) out.push(`mem ${m.key}=${m.value} conf=${m.confidence} exp=${m.expiresAt.slice(0, 10)}`);
+    if (r.memories.length === 0) out.push(`mem: none`);
+  }
   if (r.kind !== "verbatim") return out;
 
   const a = r.answer;

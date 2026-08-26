@@ -17,9 +17,11 @@ import { createInterface } from "node:readline/promises";
 import { newSession, turn, type Reply } from "../core/agent.js";
 import { MODEL } from "../core/answer.js";
 import { loadStructured } from "../core/corpus.js";
-import { contactsFrom, devLines, memberText } from "../core/render.js";
+import { contactsFrom, devLines, guestFeeFrom, memberText } from "../core/render.js";
 
-const contacts = contactsFrom(loadStructured());
+const structured = loadStructured();
+const contacts = contactsFrom(structured);
+const guestFee = guestFeeFrom(structured);
 let session = newSession("M-1001");
 /** Show the developer view. Off = exactly what a member would see. */
 let dev = true;
@@ -53,7 +55,7 @@ const rl = createInterface({ input: process.stdin, output: process.stdout });
  * that they were arriving inside the member's message.
  */
 function show(r: Reply): void {
-  const text = memberText(r, contacts);
+  const text = memberText(r, contacts, guestFee);
   if (text !== null) console.log(`\n${text}\n`);
 
   if (!dev) return;

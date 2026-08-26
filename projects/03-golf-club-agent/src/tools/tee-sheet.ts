@@ -21,7 +21,10 @@ const HoldResult = z.object({ holdId: z.string(), slotId: z.string(), expiresAt:
 const BookingResult = z.object({ bookingId: z.string(), slotId: z.string(), memberId: z.string() });
 const Bookings = z.object({
   bookings: z.array(
-    z.object({ id: z.string(), slotId: z.string(), memberId: z.string(), guests: z.number() }),
+    z.object({
+      id: z.string(), slotId: z.string(), memberId: z.string(),
+      guests: z.number(), partySize: z.number(),
+    }),
   ),
 });
 const Allowance = z.object({
@@ -150,7 +153,30 @@ export async function cancelBooking(args: {
 // ── the one tool the model sees ─────────────────────────────────
 
 export type BookOutcome =
-  | { status: "booked"; bookingId: string; slotId: string; time: string }
+  | {
+      status: "booked";
+      bookingId: string;
+      slotId: string;
+      time: string;
+      /**
+       * READ BACK FROM THE SHEET, not echoed from the request.
+       *
+       * These are the fields that cost money and the fields the model
+       * is most likely to get wrong. A member said "the 9:20, just me,
+       * I usually play early with the same three lads" and the model
+       * sent partySize 4, guests 3 — $60 of guest fees nobody agreed
+       * to. The slot ledger did not catch it because the SLOT was
+       * legitimate; the ledger constrains which slot, never who.
+       *
+       * The confirmation named neither field, so the member would have
+       * read "You're booked — Saturday 29 August at 09:20" and found
+       * out about the other three at the first tee.
+       */
+      partySize: number;
+      guests: number;
+      /** False if the read-back failed and these came from the request. */
+      verified: boolean;
+    }
   | { status: "slot_taken"; alternatives: { slotId: string; time: string }[] }
   | { status: "not_permitted"; reason: string }
   /**
@@ -276,7 +302,44 @@ export async function bookTeeTime(args: {
     //      generated FROM THE RECORD, never from what the agent said.
     queueConfirmationEmail(booking.bookingId);
 
-    return { status: "booked", bookingId: booking.bookingId, slotId: booking.slotId, time: time! };
+    // READ THE RECORD BACK.
+    //
+    // The supplier's confirm response carries no party size or guest
+    // count, and those are exactly the fields worth stating: they cost
+    // money, and they are what the model gets wrong. Echoing the
+    // request would close the model→code gap and leave the code→sheet
+    // gap open; a GET closes both, and "generated from the record" is
+    // the PRD's phrase, not "generated from what we meant to write".
+    //
+    // Changing the fake API to return them was the easier fix and the
+    // wrong one. Real suppliers do not amend their contract because it
+    // would suit your client.
+    let partySize = args.partySize;
+    let guests = args.guests;
+    let verified = false;
+    try {
+      const { bookings } = await listBookings(args.memberId);
+      const row = bookings.find((b) => b.id === booking.bookingId);
+      if (row) {
+        guests = row.guests;
+        partySize = row.partySize;
+        verified = true;
+      }
+    } catch {
+      // The booking is made. A failed read-back is not a failed
+      // booking, so fall back to what was written and say so rather
+      // than turning a success into an error.
+    }
+
+    return {
+      status: "booked",
+      bookingId: booking.bookingId,
+      slotId: booking.slotId,
+      time: time!,
+      partySize,
+      guests,
+      verified,
+    };
   } catch (e) {
     // COMPENSATE. Best-effort release so the next member gets the slot
     // back in seconds rather than minutes — but the EXPIRY is the real
