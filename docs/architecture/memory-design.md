@@ -108,6 +108,14 @@ This is how the curriculum's fourth policy — human-confirmed — gets reached 
 
 ---
 
+### The offer interrupts, and that is accepted
+
+A member who mentions a habit while booking is asked, in the same turn, whether to note it — costing them a round trip on the club's highest-volume job in exchange for a preference measured to be worth one saved round trip later.
+
+Considered and kept. The alternatives were to offer only as a conversation ends, or to drop offering entirely and store only on an explicit *"remember that…"*. The last is the strictest reading of the policy and deletes code rather than adding it, but it means the agent learns nothing unless a member thinks to teach it, and most will not.
+
+**Decision:** keep the offer. Revisit if members are observed declining it routinely — which is measurable, and worth measuring before arguing about.
+
 ## Retrieval
 
 Capped at **8**, ordered by confidence then recency, expired rows filtered on read so decay works even if nothing sweeps. Injected with explicitly fallible framing:
