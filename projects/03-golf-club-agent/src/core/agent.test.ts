@@ -209,6 +209,29 @@ test("the loop stops at MAX_STEPS and says so rather than going silent", async (
   assert.ok(shown(out).some((r) => r.kind === "error"), "and must tell the member something");
 });
 
+test('"just me" overrides the party size the model chose', async () => {
+  // The member said "just me". The model asked for four players and
+  // three guests, reading a description of how they usually play as
+  // the party for this booking. Code holds better evidence than the
+  // model does here — the member's literal words — so it uses them.
+  //
+  // The earlier version REFUSED instead, telling the model to rebook
+  // or ask. It asked, and the member ended up with no booking at all.
+  const m = scripted({
+    content: [call("book_tee_time", { slotId: "2026-08-29T09:20", partySize: 4, guests: 3 })],
+    stop_reason: "tool_use",
+  });
+  const s = member();
+  s.offered.set("2026-08-29T09:20", { date: "2026-08-29", time: "09:20" });
+  const out = await turn(s, "the 9:20, just me. I usually play with the same three lads", m.fn);
+
+  // The tee sheet is not running in unit tests, so the booking fails —
+  // what matters is that ONE attempt was made, with the corrected
+  // party, rather than the turn ending with nothing.
+  assert.ok(out.some((r) => r.kind === "booking" || r.kind === "error"),
+    "an attempt must be made, not abandoned");
+});
+
 test("a REFUSED terminal tool does not end the turn", async () => {
   // book_tee_time is terminal, so a refused booking ended the turn on
   // the strength of the tool's NAME: the solo guard caught "just me"

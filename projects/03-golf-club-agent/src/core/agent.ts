@@ -723,8 +723,25 @@ export async function turn(
 
     for (const call of calls) {
       s.step++;
-      const { reply, forModel } = await execute(s, call.name, call.input);
-      out.push({ kind: "trace", tool: call.name, args: call.input, note: forModel });
+      const { reply, forModel, effectiveArgs } = await execute(s, call.name, call.input);
+      // THE TRACE RECORDS WHAT WAS DONE, NOT WHAT WAS ASKED FOR.
+      //
+      // A guard corrected a party size from four to one and the trace
+      // still showed four, because it logged the model's arguments.
+      // Everything downstream then read a request as an outcome — the
+      // conversational eval asserted against it and failed a booking
+      // that had actually been made correctly.
+      //
+      // A trace that shows the request but not the correction is a
+      // trace that lies about what happened, which is worse than no
+      // trace: it is confidently wrong in the one artefact you consult
+      // when something has gone wrong.
+      out.push({
+        kind: "trace",
+        tool: call.name,
+        args: effectiveArgs ?? call.input,
+        note: forModel,
+      });
       if (reply) out.push(reply);
       results.push({ type: "tool_result", tool_use_id: call.id, content: forModel });
 
@@ -788,7 +805,7 @@ async function execute(
   s: Session,
   name: string,
   input: unknown,
-): Promise<{ reply?: Reply; forModel: string }> {
+): Promise<{ reply?: Reply; forModel: string; effectiveArgs?: Record<string, unknown> }> {
   if (name === "search_knowledge") {
     const { question } = input as { question: string };
     const r = await ask(question, docs, structured);
@@ -901,13 +918,28 @@ async function execute(
     //
     // Read from the MEMBER'S TURN, like every other guard here, and
     // never from the arguments the model chose.
-    if (saidTheyArePlayingAlone(lastMemberTurn(s)) && (partySize > 1 || guests > 0)) {
-      return {
-        forModel:
-          `Refused: they said they are playing on their own, and you asked for ` +
-          `${partySize} players and ${guests} guests. If they mentioned other people it was ` +
-          `about how they usually play, not this booking. Book it as one player, or ask them.`,
-      };
+    let party = partySize;
+    let guestCount = guests;
+    if (saidTheyArePlayingAlone(lastMemberTurn(s)) && (party > 1 || guestCount > 0)) {
+      // CORRECTED, NOT REFUSED.
+      //
+      // The first version refused and told the model "book it as one
+      // player, or ask them". It took the second option — compliant,
+      // and the member ended the conversation with no booking at all.
+      // Offering the model a choice put back exactly the
+      // non-determinism the guard was removing.
+      //
+      // "Just me" is not ambiguous, and the regex excludes "just me
+      // and my wife". So code believes the member over the model's
+      // inference, books what they asked for, and the confirmation
+      // states the party — which is where they would object if this
+      // were ever wrong.
+      //
+      // This is the day-7 rule at its limit: the model proposes, code
+      // disposes. Here the code holds better evidence than the model
+      // does — the member's literal words — so it uses them.
+      party = 1;
+      guestCount = 0;
     }
 
     // THE LEDGER CHECK. A prompt asking the model to only book slots it
@@ -925,8 +957,8 @@ async function execute(
       const outcome = await bookTeeTime({
         slotId,
         memberId: s.memberId,
-        partySize,
-        guests,
+        partySize: party,
+        guests: guestCount,
         sessionId: s.sessionId,
         step: s.step,
       });
@@ -935,6 +967,7 @@ async function execute(
         for (const a of outcome.alternatives) s.offered.set(a.slotId, slotParts(a.slotId));
       }
       return {
+        effectiveArgs: { slotId, partySize: party, guests: guestCount, requestedTime },
         reply: { kind: "booking", outcome, requested: requestedTime },
         forModel:
           outcome.status === "booked"
