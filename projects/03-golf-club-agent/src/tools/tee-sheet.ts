@@ -410,3 +410,159 @@ class NotPermitted extends Error {}
 function queueConfirmationEmail(bookingId: string): void {
   void bookingId;
 }
+
+
+// ── amending a booking ──────────────────────────────────────────
+
+export type AmendOutcome =
+  | {
+      status: "amended";
+      bookingId: string;
+      previousId: string;
+      slotId: string;
+      time: string;
+      partySize: number;
+      guests: number;
+    }
+  | { status: "not_permitted"; reason: string }
+  | { status: "unavailable"; reason: string; transient: boolean }
+  /** Cancelled, and neither the new booking nor the old one could be made. */
+  | { status: "lost"; reason: string; slotId: string };
+
+/**
+ * Change a booking. ONE intent, three calls underneath.
+ *
+ * WHY THIS EXISTS. A member said "but the second person is a guest?" —
+ * a clarifying question about a detail — and the agent called
+ * cancel_booking, said "That's cancelled", and ended the turn, because
+ * cancel is terminal. The member then had to ask "so did you book me in
+ * or not?".
+ *
+ * There was no tool for changing a booking, so the model built one out
+ * of two irreversible steps and got the ordering wrong across two
+ * turns, with the member panicking in between. That is precisely what
+ * day 10 said never to allow: never expose a saga as N tools and hope
+ * the model sequences them.
+ *
+ * IT IS NOT A CANCELLATION. The tee sheet has no PATCH, so this is
+ * physically a cancel and a rebook — but treating it as a cancellation
+ * would send a member correcting a guest count on tomorrow's booking
+ * into the late-fee approval queue for a $15 charge they never asked
+ * for. Fixing a typo must not cost money.
+ *
+ * THE RISK IS REAL AND HANDLED HONESTLY. Between the cancel and the
+ * rebook the slot is free and someone else can take it. Rules are
+ * checked BEFORE anything is touched, the original is restored if the
+ * rebook fails, and if the restore also fails the outcome says `lost`
+ * rather than pretending — the member has been harmed by our action and
+ * a person must be told.
+ */
+export async function amendBooking(args: {
+  bookingId: string;
+  memberId: string;
+  partySize: number;
+  guests: number;
+  slotId?: string;
+  sessionId: string;
+  clubRules: ClubRules;
+  step: number;
+}): Promise<AmendOutcome> {
+  // A FAILED LOOKUP IS NOT A MISSING BOOKING.
+  //
+  // This swallowed the error and returned "I can't find that booking",
+  // so a tee sheet that was merely unreachable told a member their
+  // booking did not exist — the 404-vs-outage conflation from day 12,
+  // in the one path where the mistake reads as "we have lost your
+  // reservation".
+  let bookings;
+  try {
+    ({ bookings } = await listBookings(args.memberId));
+  } catch (e) {
+    const k = (e as ToolError).kind;
+    return {
+      status: "unavailable",
+      reason: (e as Error).message,
+      transient: k === "timeout" || k === "server" || k === "ratelimit" || k === "circuit_open",
+    };
+  }
+
+  const original = bookings.find((b) => b.id === args.bookingId);
+  if (!original) {
+    return { status: "not_permitted", reason: "I can't find that booking on the sheet" };
+  }
+
+  const slotId = args.slotId ?? original.slotId;
+
+  // BEFORE ANYTHING IS TOUCHED. A booking must never be destroyed on
+  // the way to discovering the replacement was not allowed.
+  const violation = checkBooking({ slotId, guests: args.guests }, args.clubRules);
+  if (violation) return { status: "not_permitted", reason: violation.member };
+
+  try {
+    await cancelBooking({
+      bookingId: args.bookingId,
+      memberId: args.memberId,
+      sessionId: args.sessionId,
+      step: args.step,
+    });
+  } catch (e) {
+    // Nothing has changed. The safest failure there is.
+    const k = (e as ToolError).kind;
+    return {
+      status: "unavailable",
+      reason: (e as Error).message,
+      transient: k === "timeout" || k === "server" || k === "ratelimit" || k === "circuit_open",
+    };
+  }
+
+  const made = await bookTeeTime({
+    slotId,
+    memberId: args.memberId,
+    partySize: args.partySize,
+    guests: args.guests,
+    sessionId: args.sessionId,
+    clubRules: args.clubRules,
+    step: args.step + 1,
+  });
+
+  if (made.status === "booked") {
+    return {
+      status: "amended",
+      bookingId: made.bookingId,
+      previousId: args.bookingId,
+      slotId: made.slotId,
+      time: made.time,
+      partySize: made.partySize,
+      guests: made.guests,
+    };
+  }
+
+  // COMPENSATE. Put the member back where they were.
+  const restored = await bookTeeTime({
+    slotId: original.slotId,
+    memberId: args.memberId,
+    partySize: original.partySize,
+    guests: original.guests,
+    sessionId: args.sessionId,
+    clubRules: args.clubRules,
+    step: args.step + 2,
+  });
+
+  if (restored.status === "booked") {
+    return {
+      status: "not_permitted",
+      reason:
+        made.status === "slot_taken"
+          ? "someone took that slot while I was changing it, so I've put your original booking back"
+          : "I couldn't make that change, so I've put your original booking back",
+    };
+  }
+
+  // Both failed. The member is worse off than before they spoke to us,
+  // and saying anything else would be a lie.
+  return {
+    status: "lost",
+    slotId: original.slotId,
+    reason: `Cancelled ${args.bookingId} (${original.slotId}) and could not rebook or restore it.`,
+  };
+}

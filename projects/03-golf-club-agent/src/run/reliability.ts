@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
 import { z } from "zod";
 import { rulesFrom } from "../core/rules.js";
 import { loadStructured } from "../core/corpus.js";
-import { bookTeeTime, cancelBooking, checkAvailability } from "../tools/tee-sheet.js";
+import { amendBooking, bookTeeTime, cancelBooking, checkAvailability } from "../tools/tee-sheet.js";
 import { resetCircuit } from "../tools/client.js";
 import { clearAll, forget, pending } from "../tools/idempotency.js";
 import { confirmBooking, holdSlot } from "../tools/tee-sheet.js";
@@ -210,6 +210,76 @@ try {
     const world = await state();
     check("the tee sheet holds exactly one live booking",
       world.bookings.length === 1, `(${world.bookings.length})`);
+  }
+
+  // ═══ 6. AMEND, AND THE COMPENSATION WHEN IT FAILS ═════════════
+  //
+  // The tee sheet has no PATCH, so changing a booking is physically a
+  // cancel and a rebook — and between them the slot is free for anyone.
+  // A member who asked to move to a busier time must not end up with
+  // NOTHING because someone got there first.
+  console.log("\n6. amend — and the compensation when the new slot is gone");
+  await reset();
+  {
+    const wanted = `${tomorrow}T13:00`;
+    const mine = await bookTeeTime({
+      slotId: SLOT, memberId: "M-1001", partySize: 1, guests: 0,
+      sessionId: "S-amend", clubRules, step: 1,
+    });
+    if (mine.status !== "booked") throw new Error(`setup failed: ${mine.status}`);
+
+    // Someone else takes the slot our member is about to move to.
+    const theirs = await bookTeeTime({
+      slotId: wanted, memberId: "M-1002", partySize: 1, guests: 0,
+      sessionId: "S-other", clubRules, step: 1,
+    });
+    if (theirs.status !== "booked") throw new Error(`setup failed: ${theirs.status}`);
+
+    const out = await amendBooking({
+      bookingId: mine.bookingId, memberId: "M-1001",
+      partySize: 1, guests: 0, slotId: wanted,
+      sessionId: "S-amend", clubRules, step: 5,
+    });
+
+    check("the amend was refused", out.status === "not_permitted", `(${out.status})`);
+    check("and it says WHY, in a sentence a member can act on",
+      out.status === "not_permitted" && /took that slot/.test(out.reason),
+      out.status === "not_permitted" ? out.reason : "");
+
+    const world = await state();
+    const restored = world.bookings.find((b) => b.slotId === SLOT);
+    check("THE ORIGINAL BOOKING IS BACK", restored !== undefined,
+      `(slots held: ${world.bookings.map((b) => b.slotId).join(", ")})`);
+    check("and the other member still has theirs",
+      world.bookings.some((b) => b.slotId === wanted));
+    check("exactly two bookings exist — no duplicate, no loss",
+      world.bookings.length === 2, `(${world.bookings.length})`);
+  }
+
+  // ═══ 7. CONTROL — an amend that succeeds leaves ONE booking ════
+  console.log("\n7. control — a successful amend replaces, it does not duplicate");
+  await reset();
+  {
+    const first = await bookTeeTime({
+      slotId: SLOT, memberId: "M-1001", partySize: 1, guests: 0,
+      sessionId: "S-amend2", clubRules, step: 1,
+    });
+    if (first.status !== "booked") throw new Error(`setup failed: ${first.status}`);
+
+    const out = await amendBooking({
+      bookingId: first.bookingId, memberId: "M-1001",
+      partySize: 2, guests: 1,
+      sessionId: "S-amend2", clubRules, step: 5,
+    });
+
+    check("the amend succeeded", out.status === "amended", `(${out.status})`);
+    check("the guest count changed",
+      out.status === "amended" && out.guests === 1, out.status === "amended" ? `${out.guests}` : "");
+    check("it is a NEW reference",
+      out.status === "amended" && out.bookingId !== first.bookingId);
+
+    const world = await state();
+    check("exactly ONE booking exists", world.bookings.length === 1, `(${world.bookings.length})`);
   }
 
   console.log(`\n${failures === 0 ? "all checks passed" : `${failures} check(s) FAILED`}\n`);

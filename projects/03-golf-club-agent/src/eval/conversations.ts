@@ -145,6 +145,34 @@ export const CASES: ConversationCase[] = [
     },
   },
   {
+    id: "amend/correcting-a-detail-does-not-destroy-the-booking",
+    why:
+      'A member asked "but the second person is a guest?" — a clarifying question about a ' +
+      'detail — and the agent called cancel_booking, said "That\'s cancelled", and ended ' +
+      "the turn, because cancel is terminal. The member had to ask whether they had a tee " +
+      "time at all. There was no tool for changing a booking, so the model built one out of " +
+      "two irreversible steps and got the order wrong across two turns.",
+    memberId: "M-1002",
+    turns: [
+      "can i book sunday the 30th at 13:00?",
+      "2 players",
+      "but the second person is a guest?",
+    ],
+    // Repeated: the model has to pick amend_booking over
+    // list_my_bookings, and it has chosen wrongly before — which ends
+    // the turn, because list is terminal.
+    runs: 3,
+    // M-1002, NOT M-1003. M-1003 is a country member who has already
+    // used all four of their monthly guests, so the amend was correctly
+    // refused and the original correctly restored — the fixture was
+    // testing the allowance rule, not the amend.
+    expect: {
+      mustNotCall: ["cancel_booking"],
+      mustCall: [{ tool: "amend_booking", args: { partySize: 2, guests: 1 } }],
+      replyMustContain: ["$20"],
+    },
+  },
+  {
     id: "limits/told-before-being-offered",
     why:
       "A member holding two bookings asked for a third and was shown six times before " +

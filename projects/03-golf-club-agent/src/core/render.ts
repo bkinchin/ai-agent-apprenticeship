@@ -205,6 +205,37 @@ export function memberText(
         `${sentence(reachable(contacts.pro_shop))} can sort that out.`;
   }
 
+  if (r.kind === "amended") {
+    const o = r.outcome;
+    if (o.status === "amended") {
+      const date = o.slotId.split("T")[0] ?? "";
+      const who =
+        o.guests > 0
+          ? `${o.partySize} players including ${o.guests} guest${o.guests > 1 ? "s" : ""}`
+          : o.partySize > 1
+            ? `${o.partySize} players`
+            : `just you`;
+      const fee = o.guests > 0 && guestFee ? ` Guest fees come to $${o.guests * guestFee}.` : "";
+      return (
+        `Changed — ${niceDate(date)} at ${o.time}, ${who}.${fee} ` +
+        `Your new reference is ${o.bookingId}.`
+      );
+    }
+    if (o.status === "lost") {
+      // The one message that must not be softened.
+      return (
+        `Something has gone wrong — your booking was cancelled and I couldn't put it back. ` +
+        `I've flagged it to ${reachable(contacts.pro_shop)} and they'll sort it out. ` +
+        `I'm sorry.`
+      );
+    }
+    if (o.status === "not_permitted") return `I couldn't change that — ${o.reason}.`;
+    return (
+      `I can't reach the tee sheet, so nothing has changed. ` +
+      `${sentence(reachable(contacts.pro_shop))} can do it directly.`
+    );
+  }
+
   if (r.kind === "cancelled") {
     return r.ok
       ? `That's cancelled.`
@@ -355,6 +386,7 @@ export function devLines(r: Reply): string[] {
   if (r.kind === "error") out.push(`error: ${r.text}`);
   if (r.kind === "booking") out.push(`tee sheet: ${JSON.stringify(r.outcome)}`);
   if (r.kind === "cancelled") out.push(`tee sheet: cancelled=${r.ok}`);
+  if (r.kind === "amended") out.push(`tee sheet: ${JSON.stringify(r.outcome)}`);
   if (r.kind === "bookings") out.push(`tee sheet: ${r.bookings.length} booking(s)`);
   if (r.kind === "proposed") out.push(`proposed ${r.action.ref} · ${r.action.tool}(${JSON.stringify(r.action.args)}) · ${r.action.because}`);
   if (r.kind === "escalated") {

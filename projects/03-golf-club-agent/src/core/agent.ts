@@ -45,10 +45,12 @@ import { buildHandoff, memberMessage, type Handoff } from "../escalation/handoff
 import { askedForAHuman, soundsFrustrated, vulnerability } from "../escalation/policy.js";
 import { Actions, Queue, type PendingAction } from "../escalation/queue.js";
 import {
+  amendBooking,
   bookTeeTime,
   cancelBooking,
   checkAvailability,
   listBookings,
+  type AmendOutcome,
   type BookOutcome,
 } from "../tools/tee-sheet.js";
 import {
@@ -263,6 +265,7 @@ export type Reply =
       requested?: string;
     }
   | { kind: "cancelled"; ok: boolean }
+  | { kind: "amended"; outcome: AmendOutcome }
   /**
    * Drafted, not done. Assisted mode.
    *
@@ -373,6 +376,7 @@ const TERMINAL = new Set([
   // whether the sentence came from a write or a read.
   "book_tee_time",
   "cancel_booking",
+  "amend_booking",
   "list_my_bookings",
 ]);
 
@@ -450,6 +454,34 @@ const TOOLS: Tool[] = [
         guests: { type: "number", description: "How many of the party are guests." },
       },
       required: ["slotId", "partySize", "guests"],
+    },
+  },
+  {
+    name: "amend_booking",
+    // CHANGING A BOOKING IS ONE INTENT.
+    //
+    // A member asked "but the second person is a guest?" and the model
+    // called cancel_booking, said "That's cancelled", and ended the
+    // turn — because there was no tool for changing a booking, so it
+    // built one out of two irreversible steps and got the order wrong
+    // across two turns.
+    description:
+      "Change an existing booking: the number of players, the number of guests, or the " +
+      "time. Use this whenever a member corrects a detail of a booking they already have. " +
+      "NEVER cancel and rebook to make a change — this does it in one step, puts the " +
+      "original back if it fails, and does not charge a late cancellation fee.",
+    input_schema: {
+      type: "object",
+      properties: {
+        bookingId: { type: "string", description: "The booking to change." },
+        partySize: { type: "number", description: "Total players including the member, AFTER the change." },
+        guests: { type: "number", description: "How many of the party are guests, AFTER the change." },
+        slotId: {
+          type: "string",
+          description: "Only if they want a different TIME. Omit to keep the same slot.",
+        },
+      },
+      required: ["bookingId", "partySize", "guests"],
     },
   },
   {
@@ -640,6 +672,12 @@ have not made yet.
 
 Their bookings, with ids, are listed below. Use them directly — do not look them
 up before acting on them.
+
+If a member corrects a detail of a booking they already have — the number of
+players, the number of guests, the time — call amend_booking with the id from
+that list. Do it in the same turn, without checking anything first. Never
+cancel and rebook to make a change: it destroys their booking, and cancelling
+inside 24 hours charges them a fee for fixing your mistake.
 
 Anything about rules, fees, hours, dress code, competitions or etiquette goes
 to search_knowledge. It replies to the member itself, with sources — so do not
@@ -1467,6 +1505,60 @@ async function execute(
       return {
         reply: { kind: "error", text: (e as Error).message },
         forModel: `The booking failed and it is NOT known whether it landed. Do not retry.`,
+      };
+    }
+  }
+
+  if (name === "amend_booking") {
+    const { bookingId, partySize, guests, slotId } = input as {
+      bookingId: string;
+      partySize: number;
+      guests: number;
+      slotId?: string;
+    };
+    try {
+      const outcome = await amendBooking({
+        bookingId,
+        memberId: s.memberId,
+        partySize,
+        guests,
+        slotId,
+        sessionId: s.sessionId,
+        clubRules: rules,
+        step: s.step,
+      });
+      s.step += 2; // the amend consumed extra idempotency steps
+      s.bookings = undefined;
+
+      if (outcome.status === "lost") {
+        // The member is worse off than before they spoke to us. Nothing
+        // the agent can say fixes that, so a person is told immediately.
+        return {
+          ok: false,
+          reply: escalate(
+            s,
+            "went_in_circles",
+            `AMEND FAILED BADLY: ${outcome.reason} The member has NO booking and expects one.`,
+            [],
+            "will be upset — we cancelled their booking and could not replace it",
+          ),
+          forModel: `The booking is gone and could not be restored. A person has been told.`,
+        };
+      }
+      return {
+        ok: outcome.status === "amended",
+        detail: outcome.status === "amended" ? undefined : outcome.reason,
+        reply: { kind: "amended", outcome },
+        forModel:
+          outcome.status === "amended"
+            ? `Changed. The member has been shown the new details from the record.`
+            : `Not changed (${outcome.status}). The member has been told.`,
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        reply: { kind: "error", text: (e as Error).message },
+        forModel: `The change failed. Do not retry.`,
       };
     }
   }
