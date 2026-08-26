@@ -567,8 +567,36 @@ const slotParts = (slotId: string) => {
   return { date: date ?? slotId, time: time ?? "" };
 };
 
+/**
+ * How the loop reaches a model.
+ *
+ * Injected so the loop can be tested WITHOUT one. It was not, for a
+ * day, and the cost was visible: every defect that lived in the loop —
+ * a preamble shown to a member, a consent draft armed without asking,
+ * "no thanks" reaching for cancel_booking, an aside printed before the
+ * answer — was found by a person typing at it and could not be pinned
+ * down by a test afterwards.
+ *
+ * CLAUDE.md asks this of every review: is it testable without an LLM?
+ * If not, the logic and the model call are tangled. They were, here, in
+ * the largest file in the project.
+ */
+export type ModelFn = (req: {
+  system: string;
+  tools: Tool[];
+  messages: MessageParam[];
+  tool_choice: { type: "any" } | { type: "auto" };
+}) => Promise<{ content: Anthropic.ContentBlock[]; stop_reason: string | null }>;
+
+const liveModel: ModelFn = (req) =>
+  client.messages.create({ model: MODEL, max_tokens: 1024, ...req });
+
 /** One member turn. Returns everything the member should see, in order. */
-export async function turn(s: Session, input: string): Promise<Reply[]> {
+export async function turn(
+  s: Session,
+  input: string,
+  model: ModelFn = liveModel,
+): Promise<Reply[]> {
   // Snapshot and clear: a proposal is answerable for one turn only.
   s.consumable = s.pendingMemory;
   s.pendingMemory = undefined;
@@ -624,9 +652,7 @@ export async function turn(s: Session, input: string): Promise<Reply[]> {
   const out: Reply[] = [];
 
   for (let i = 0; i < MAX_STEPS; i++) {
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 1024,
+    const response = await model({
       system: systemPrompt(s),
       tools: TOOLS,
       // THE MODEL DOES NOT GET TO DECIDE WHETHER A QUESTION IS IN SCOPE.
