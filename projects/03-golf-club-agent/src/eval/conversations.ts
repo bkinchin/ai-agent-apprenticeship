@@ -145,6 +145,25 @@ export const CASES: ConversationCase[] = [
     },
   },
   {
+    id: "limits/told-before-being-offered",
+    why:
+      "A member holding two bookings asked for a third and was shown six times before " +
+      "being refused. The agent already knew — the bookings are loaded into its prompt at " +
+      "the start of every turn — but counting two against a rule of two was left to the " +
+      "model. Same shape as the competition window: do not offer what cannot be booked.",
+    memberId: "M-1002",
+    turns: [
+      "book a round saturday the 29th at 12pm, just me",
+      "same for sunday the 30th",
+      "ok same for monday the 31st",
+    ],
+    expect: {
+      // The third booking must not be attempted at all, and the member
+      // must be told why before choosing a time.
+      replyMustContain: ["limit"],
+    },
+  },
+  {
     id: "slots/competition-window-is-not-bookable",
     why:
       "A member asked for Saturday 9am and was booked, straight into the club competition " +

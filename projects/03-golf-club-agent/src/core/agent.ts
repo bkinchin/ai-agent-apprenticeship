@@ -666,7 +666,19 @@ function held(s: Session): string {
     const [d, t] = b.slotId.split("T");
     return `- ${d} at ${t}${b.guests ? `, ${b.guests} guest(s)` : ""} — booking id ${b.id}`;
   });
-  return `\n\nTheir current bookings, from the tee sheet just now:\n${lines.join("\n")}`;
+  // AT THE LIMIT IS A FACT, NOT AN INFERENCE.
+  //
+  // The list alone was not enough: shown two bookings and a rule of
+  // two, the model offered a third set of times and the member picked
+  // one before being refused. Counting is not the model's job when the
+  // count is already known here.
+  const full =
+    s.bookings.length >= rules.maxLivePerMember
+      ? `\n\nThey are AT the limit of ${rules.maxLivePerMember} live bookings. They cannot ` +
+        `book anything else until one of these is cancelled or played. Say so BEFORE ` +
+        `offering times, not after they have chosen one.`
+      : "";
+  return `\n\nTheir current bookings, from the tee sheet just now:\n${lines.join("\n")}${full}`;
 }
 
 /**
@@ -1255,6 +1267,11 @@ async function execute(
         // this says Friday, the model can see the mismatch — it could
         // not before, because a bare ISO date carries no day name.
         forModel:
+          (s.bookings && s.bookings.length >= rules.maxLivePerMember
+            ? `STOP: they already hold ${s.bookings.length} live bookings, which is the ` +
+              `maximum of ${rules.maxLivePerMember}. Do NOT offer any of these times — tell ` +
+              `them they are at the limit and would need to cancel one first. `
+            : "") +
           (removed > 0
             ? `NOTE: ${removed} slot(s) hidden — the tee sheet is closed then ` +
               `(${closures.map((c) => `${c.day} ${c.from}-${c.to}, ${c.reason}`).join("; ")}). ` +
