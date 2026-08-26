@@ -30,6 +30,7 @@
 // model's `reason` or `suggestion` at all — both are written for a
 // developer, and neither is needed once the contact details are real.
 
+import { memberMessage } from "../escalation/handoff.js";
 import type { Reply } from "./agent.js";
 
 /** One role a member can be routed to. Shape of `structured/contacts.yaml`. */
@@ -104,6 +105,18 @@ const reachable = (c: Contact | undefined): string =>
  * exists only as a diagnostic. The caller decides what to do with
  * silence; this function does not invent something to fill it.
  */
+/**
+ * The member-facing sentence with no club context needed.
+ *
+ * A thin wrapper so agent.ts can build a transcript of what the member
+ * actually read without importing the contacts directory. Contact
+ * details are stripped rather than fabricated — the handoff carries
+ * them separately.
+ */
+export function memberSentence(r: import("./agent.js").Reply): string | null {
+  return memberText(r, {}, undefined);
+}
+
 export function memberText(
   r: Reply,
   contacts: Record<string, Contact>,
@@ -206,6 +219,29 @@ export function memberText(
       return `  · ${niceDate(date ?? "")} at ${time}${guests} — ${b.id}`;
     });
     return `You've got ${r.bookings.length === 1 ? "one booking" : `${r.bookings.length} bookings`}:\n${lines.join("\n")}`;
+  }
+
+  if (r.kind === "proposed") {
+    // HONEST ABOUT THE STATE. Nothing has happened yet, and the member
+    // must not leave believing it has — a cancellation they think went
+    // through and did not is the same failure as a booking they think
+    // is for Saturday and is not.
+    const a = r.action;
+    const when = a.when ? niceDate(a.when.split(" at ")[0] ?? "") : "that one";
+    const time = a.when?.split(" at ")[1];
+    return (
+      `That's inside 24 hours of your tee time${time ? ` (${when} at ${time})` : ""}, ` +
+      `so there's a $${a.fee ?? 15} late cancellation fee and the pro shop has to approve it. ` +
+      `I've passed it to them — nothing has been cancelled and nothing has been charged yet.`
+    );
+  }
+
+  if (r.kind === "escalated") {
+    // NEVER "an error occurred". Say what is happening, why, and when
+    // they will hear back — the reference last, so it does not lead.
+    // A handoff the member cannot chase is a handoff they will chase by
+    // ringing the pro shop, which is the cost the agent was avoiding.
+    return memberMessage(r.handoff);
   }
 
   if (r.kind === "memories") {
@@ -320,6 +356,11 @@ export function devLines(r: Reply): string[] {
   if (r.kind === "booking") out.push(`tee sheet: ${JSON.stringify(r.outcome)}`);
   if (r.kind === "cancelled") out.push(`tee sheet: cancelled=${r.ok}`);
   if (r.kind === "bookings") out.push(`tee sheet: ${r.bookings.length} booking(s)`);
+  if (r.kind === "proposed") out.push(`proposed ${r.action.ref} · ${r.action.tool}(${JSON.stringify(r.action.args)}) · ${r.action.because}`);
+  if (r.kind === "escalated") {
+    const h = r.handoff;
+    out.push(`escalated ${h.ref} · ${h.triggerId} · ${h.urgency} · ${h.team} · missing=${h.missing}`);
+  }
   if (r.kind === "memories") {
     for (const m of r.memories) out.push(`mem ${m.key}=${m.value} conf=${m.confidence} exp=${m.expiresAt.slice(0, 10)}`);
     if (r.memories.length === 0) out.push(`mem: none`);

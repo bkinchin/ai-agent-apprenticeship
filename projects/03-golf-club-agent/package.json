@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "knowledge": "tsx --env-file=../../.env.local src/run/knowledge-eval.ts",
-    "test": "MEMORY_DB=:memory: tsx --test src/**/*.test.ts",
+    "test": "MEMORY_DB=:memory: QUEUE_DB=:memory: tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "ask": "tsx --env-file=../../.env.local src/run/ask.ts",
     "tee-sheet": "tsx tee-sheet/server.ts",
@@ -13,7 +13,8 @@
     "degraded": "tsx --env-file=../../.env.local src/run/degraded.ts",
     "chat": "tsx --env-file=../../.env.local src/run/chat.ts",
     "memory-value": "tsx --env-file=../../.env.local src/run/memory-value.ts",
-    "conversations": "tsx --env-file=../../.env.local src/run/conversation-eval.ts"
+    "conversations": "tsx --env-file=../../.env.local src/run/conversation-eval.ts",
+    "console": "tsx src/run/console.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.0",

@@ -41,3 +41,6 @@ eval-findings/
 
 # day-11 memory store (runtime state, and personal data)
 .memory.db
+
+# day-12 escalation queue (runtime state, and personal data)
+.queue.db

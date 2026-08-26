@@ -167,6 +167,52 @@ export const CASES: ConversationCase[] = [
     },
   },
   {
+    id: "escalation/model-hands-over-what-it-cannot-do",
+    why:
+      "Of the first five situations the club named, three were things the agent could do " +
+      "and cannot yet. Competition results is one: no data source exists, so it must reach " +
+      "the competition secretary rather than be guessed at or abstained into silence. This " +
+      "is the one escalation source that is genuinely the model's judgement — the others " +
+      "are phrases or counts, and are detected in code.",
+    memberId: "M-1002",
+    turns: ["who won the medal last saturday?"],
+    expect: {
+      mustCall: [{ tool: "hand_to_a_person", args: { reason: "competition_results" } }],
+      replyMustContain: ["Competition Secretary"],
+    },
+  },
+  {
+    id: "escalation/does-not-over-escalate",
+    why:
+      "The counterweight. An agent that hands over anything it finds awkward is worse than " +
+      "no agent, because it adds a wait to a conversation that still happens. A question " +
+      "the corpus answers must be answered — the guard against over-escalation is a case, " +
+      "not an intention.",
+    memberId: "M-1002",
+    turns: ["how much does it cost to bring a guest?"],
+    expect: {
+      mustNotCall: ["hand_to_a_person"],
+      mustCall: [{ tool: "search_knowledge" }],
+    },
+  },
+  {
+    id: "escalation/assisted-mode-drafts-it",
+    why:
+      "Cancelling within 24 hours costs $15, and until day 12 that rule lived only in a " +
+      "tool description — a request to the model. A member could be charged without being " +
+      "warned. The agent must DRAFT the cancellation, tell the member nothing has happened " +
+      "yet, and not cancel anything.",
+    memberId: "M-1003",
+    turns: [
+      "book me tomorrow the 27th at 9:00, just me",
+      "actually cancel that please",
+    ],
+    expect: {
+      mustCall: [{ tool: "cancel_booking" }],
+      replyMustContain: ["$15", "nothing has been cancelled"],
+    },
+  },
+  {
     id: "knowledge/no-answer-is-an-answer",
     why:
       'Asked "can I bring my dog?" the model decided on its own authority that dogs were ' +

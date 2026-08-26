@@ -103,7 +103,13 @@ async function runCase(c: ConversationCase): Promise<Result> {
   }
 
   for (const must of e.replyMustContain ?? []) {
-    if (!r.replies.some((x) => x.includes(must))) {
+    // CASE-INSENSITIVE. The agent said "the competition secretary" and
+    // this demanded "Competition Secretary", failing a reply that was
+    // correct. Gating on capitalisation is the fuzzy-prose gating the
+    // testing standard warns about, wearing a disguise: the assertion
+    // is about whether a fact reached the member, not about how it was
+    // typeset.
+    if (!r.replies.some((x) => x.toLowerCase().includes(must.toLowerCase()))) {
       r.failures.push(`no reply contained "${must}" — said: ${r.replies.join(" | ").slice(0, 200)}`);
     }
   }

@@ -41,6 +41,9 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
+import { buildHandoff, memberMessage, type Handoff } from "../escalation/handoff.js";
+import { askedForAHuman, soundsFrustrated, vulnerability } from "../escalation/policy.js";
+import { Actions, Queue, type PendingAction } from "../escalation/queue.js";
 import {
   bookTeeTime,
   cancelBooking,
@@ -57,7 +60,7 @@ import {
   statedAsStanding,
   type Memory,
 } from "../memory/store.js";
-import { memoryOfferText } from "./render.js";
+import { memberSentence, memoryOfferText } from "./render.js";
 import { ask, MODEL, type Answer } from "./answer.js";
 import { loadDocuments, loadStructured } from "./corpus.js";
 
@@ -87,6 +90,11 @@ const structured = loadStructured();
  * separates a memory that feels useful from one that feels creepy.
  */
 export const memory = new MemoryStore();
+
+/** Where escalations go. One per process; the human console reads the same file. */
+export const queue = new Queue();
+/** Actions the agent has drafted and a human must approve. See assisted mode. */
+export const actions = new Actions();
 
 export interface Session {
   memberId: string;
@@ -144,6 +152,54 @@ export interface Session {
    * It survives exactly one turn. A proposal the member walked past is
    * not consent they gave later.
    */
+  /**
+   * Set once the conversation has been handed to a person and must NOT
+   * continue. Only emotional triggers do this — a member routed to the
+   * club secretary after a bereavement should not find themselves back
+   * in a booking flow two turns later. A competition-results
+   * escalation, by contrast, leaves them free to book a tee time.
+   */
+  halted?: Handoff;
+  /** Tool signatures this session, for loop detection. */
+  fired: string[];
+  /**
+   * Everything that has actually happened this SESSION.
+   *
+   * ATTEMPTED read "(nothing)" on an escalation where the agent had
+   * booked two tee times and been refused a third — because the
+   * escalation fired on a LATER TURN than the tool calls, and was
+   * handed that turn's empty list. The field the handoff depends on
+   * most was empty exactly when there was most to say.
+   *
+   * A handoff summarises a conversation, not a turn.
+   */
+  happened: Reply[];
+  /**
+   * A policy refusal happened last turn.
+   *
+   * Frustration ALONE is a member having a bad day and is not a
+   * handoff. Frustration immediately after being told no is the club's
+   * named accountable owner needing to make a judgement the rules do
+   * not let the agent make.
+   */
+  refusedLastTurn?: string;
+  /**
+   * The member's live bookings, loaded lazily and refreshed after any
+   * write.
+   *
+   * Asked to "cancel that please", the model called list_my_bookings to
+   * find the id — which is terminal, so the turn ended and the member
+   * got a list instead of a cancellation. Every cancellation cost two
+   * turns because the agent began each session not knowing what the
+   * member had booked.
+   *
+   * It is a fact the tee sheet holds, so it is a LOOKUP, not a
+   * conversation step. Day 11's rule, applied to session setup rather
+   * than to memory.
+   */
+  bookings?: { id: string; slotId: string; guests: number }[];
+  /** Consecutive turns where the corpus could not answer. */
+  fruitless: number;
   pendingMemory?: { key: string; value: string; quote: string; turn: string };
   /** This turn's view of pendingMemory, snapshotted at the top of turn(). */
   consumable?: { key: string; value: string; quote: string; turn: string };
@@ -156,6 +212,9 @@ export const newSession = (memberId: string): Session => ({
   history: [],
   offered: new Map(),
   memories: memory.recall(memberId),
+  fired: [],
+  happened: [],
+  fruitless: 0,
 });
 
 /**
@@ -199,6 +258,15 @@ export type Reply =
       requested?: string;
     }
   | { kind: "cancelled"; ok: boolean }
+  /**
+   * Drafted, not done. Assisted mode.
+   *
+   * The agent has gathered everything and written the exact call; a
+   * human approves it before it runs. Carries the action so the caller
+   * can queue it and the member can be told honestly that nothing has
+   * happened yet.
+   */
+  | { kind: "proposed"; action: PendingAction }
   | { kind: "memories"; memories: Memory[] }
   | { kind: "bookings"; bookings: { id: string; slotId: string; guests: number }[] }
   | { kind: "verbatim"; answer: Answer; badCitations: { source: string; why: string }[]; staleSources: { id: string; reviewDue: string }[] }
@@ -214,6 +282,12 @@ export type Reply =
    */
   | { kind: "aside"; text: string }
   /**
+   * Handed to a person. Carries the package so the caller can queue it,
+   * show it, or assert on it — the member-facing sentence is only one
+   * of the three things an escalation produces.
+   */
+  | { kind: "escalated"; handoff: Handoff }
+  /**
    * Developer-only. Never reaches a member — memberText returns null.
    *
    * Added because a booking conversation went wrong and the transcript
@@ -223,7 +297,33 @@ export type Reply =
    * result". A tool whose result you cannot inspect is a tool you
    * cannot debug, and the second reading turned out to be the true one.
    */
-  | { kind: "trace"; tool: string; args: unknown; note: string };
+  | {
+      kind: "trace";
+      tool: string;
+      args: unknown;
+      note: string;
+      /**
+       * Why, in words a person can read.
+       *
+       * The note beside it is written FOR THE MODEL — "Not booked
+       * (not_permitted). The member has been told. Do not invent a fix."
+       * — and a staff member reading a handoff was getting that. Third
+       * audience for the same content, and the second time internal
+       * text has reached someone it was not written for.
+       */
+      detail?: string;
+      /**
+       * Did it work? Decided AT THE SOURCE.
+       *
+       * The handoff package used to infer this by matching the note
+       * against /^(Refused|Not stored)/ — and a refused booking whose
+       * note began "Not booked (not_permitted)" was reported to a staff
+       * member as "✓ Booked". Determining truth by parsing prose, in
+       * the artefact somebody uses to decide what to do, when the
+       * outcome was known here and thrown away.
+       */
+      ok: boolean;
+    };
 
 /**
  * A ceiling on model calls per turn.
@@ -243,6 +343,7 @@ const MAX_STEPS = 6;
  * three directories away.
  */
 const TERMINAL = new Set([
+  "hand_to_a_person",
   "search_knowledge",
   "end_turn",
   // Memory is shown from the store, not described by the model — and
@@ -310,9 +411,17 @@ const TOOLS: Tool[] = [
   {
     name: "list_my_bookings",
     // NO memberId PARAMETER. See the note in execute().
+    //
+    // ONLY FOR SHOWING, NEVER FOR LOOKING UP. The member's bookings and
+    // their ids are already in your instructions, refreshed from the
+    // tee sheet at the start of this turn. Asked to "cancel that
+    // please", the model called this first — which is terminal, so the
+    // turn ended and the member got a list instead of a cancellation.
     description:
-      "The member's current bookings. Shown to the member directly from the tee sheet — " +
-      "do not restate the times afterwards.",
+      "Show the member their bookings, when they ASK to see them. " +
+      "Do NOT call this to find a booking id — you already have their bookings and ids in " +
+      "your instructions above. If they asked you to cancel something, call cancel_booking " +
+      "with the id you already have.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -411,6 +520,43 @@ const TOOLS: Tool[] = [
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "hand_to_a_person",
+    // THE MODEL MAY ONLY RAISE THE TRIGGERS THAT ARE ITS OWN JUDGEMENT.
+    //
+    // Three capability reasons, and no others. A bereavement, a request
+    // for a human, a loop and a step limit are detected in code, from
+    // the member's words or from a count — none of them is a judgement
+    // call, and letting the model declare them would make the most
+    // important triggers in the system depend on it noticing.
+    //
+    // Conversely, "this is outside what I can do" genuinely IS a
+    // judgement, and code cannot make it.
+    description:
+      "Hand the conversation to a member of staff, when it is something you cannot do. " +
+      "Use membership_enquiry for joining or membership packages; competition_results for " +
+      "competition results or scores; not_in_knowledge_base when the club's documents and " +
+      "your tools genuinely do not cover what they asked. " +
+      "Do NOT use this because the member is upset, or because they asked for a person — " +
+      "both are handled already. Do not use it to avoid a difficult question you could " +
+      "answer with a tool.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          enum: ["membership_enquiry", "competition_results", "not_in_knowledge_base"],
+        },
+        summary: {
+          type: "string",
+          description:
+            "One sentence a staff member reads first: what they want, in their terms. " +
+            "Not what you did about it.",
+        },
+      },
+      required: ["reason", "summary"],
+    },
+  },
+  {
     name: "end_turn",
     // THE ESCAPE HATCH, AND WHY IT DOES NOT REOPEN THE HOLE.
     //
@@ -487,6 +633,9 @@ seen its fees, its dress code, its opening hours or its booking rules. If you
 find yourself about to state a fact about the club, that is a tool call you
 have not made yet.
 
+Their bookings, with ids, are listed below. Use them directly — do not look them
+up before acting on them.
+
 Anything about rules, fees, hours, dress code, competitions or etiquette goes
 to search_knowledge. It replies to the member itself, with sources — so do not
 introduce it ("let me look that up"), do not summarise it afterwards, and do
@@ -495,8 +644,25 @@ not restate what you think it said. Call the tool; the turn ends there.
 If a question is not about the club at all, say so briefly.
 
 Be warm and short. Members are usually on a phone.
-${recalled(s)}`;
+${recalled(s)}${held(s)}`;
 };
+
+/**
+ * The member's current bookings, as fact rather than memory.
+ *
+ * These come from the tee sheet on every session, so they carry no
+ * "may be out of date" caveat — unlike memory directly above, which
+ * does. The two blocks sit next to each other in the prompt and must
+ * not read alike: one is a record and the other is a belief.
+ */
+function held(s: Session): string {
+  if (!s.bookings?.length) return "\n\nThey have no bookings at the moment.";
+  const lines = s.bookings.map((b) => {
+    const [d, t] = b.slotId.split("T");
+    return `- ${d} at ${t}${b.guests ? `, ${b.guests} guest(s)` : ""} — booking id ${b.id}`;
+  });
+  return `\n\nTheir current bookings, from the tee sheet just now:\n${lines.join("\n")}`;
+}
 
 /**
  * Memory, framed as fallible — which is the whole point of the format.
@@ -548,6 +714,67 @@ export function dateProblem(isoDate: string, now = new Date()): string | undefin
   return undefined;
 }
 
+/** The conversation so far, in plain text, for the handoff package. */
+function transcriptOf(s: Session): { role: string; text: string }[] {
+  // THE MEMBER'S SIDE FROM history, THE AGENT'S SIDE FROM WHAT WE SENT.
+  //
+  // Reading history for both showed the staff member model PREAMBLES —
+  // "Great! 9:00 is available. Let me book that for you" — which are
+  // suppressed from members and which sometimes describe things that
+  // did not then happen. The confirmations the member actually read are
+  // code-generated Reply objects and were nowhere in it.
+  //
+  // A transcript that shows what the model said rather than what the
+  // member read is the same defect as a trace logging requests as
+  // outcomes, in the artefact a human uses to decide what to do.
+  const out: { role: string; text: string }[] = [];
+  const agentSaid = s.happened
+    .filter((r) => r.kind !== "trace")
+    .map((r) => memberSentence(r))
+    .filter((t): t is string => t !== null);
+
+  let i = 0;
+  for (const m of s.history) {
+    if (m.role === "user" && typeof m.content === "string") {
+      out.push({ role: "member", text: m.content });
+      if (agentSaid[i]) out.push({ role: "agent", text: agentSaid[i]! });
+      i++;
+    }
+  }
+  for (; i < agentSaid.length; i++) out.push({ role: "agent", text: agentSaid[i]! });
+  return out;
+}
+
+/**
+ * Hand this conversation to a person.
+ *
+ * Builds the package, puts it in the queue, and returns what the member
+ * sees — three outputs from one call, because an escalation that
+ * produces a sentence but no queue entry is an agent quietly ending the
+ * conversation, which is the failure mode this whole day exists to
+ * prevent.
+ */
+function escalate(
+  s: Session,
+  triggerId: string,
+  summary: string,
+  soFar: Reply[],
+  sentiment?: string,
+): Reply {
+  // The whole session, not the caller's fragment — see Session.happened.
+  const everything = [...s.happened, ...soFar];
+  const handoff = buildHandoff({
+    memberId: s.memberId,
+    triggerId,
+    summary,
+    replies: everything,
+    transcript: transcriptOf(s),
+    sentiment,
+  });
+  queue.add(handoff);
+  return { kind: "escalated", handoff };
+}
+
 /**
  * The member's own words this turn, ignoring tool results.
  *
@@ -563,6 +790,12 @@ function lastMemberTurn(s: Session): string {
 }
 
 /** "2026-08-23T09:20" → { date, time }. The tee sheet's slot IDs are self-describing. */
+/** The late cancellation fee, from fees.yaml. Never a literal. */
+function lateCancellationFee(): number | undefined {
+  const fees = structured["fees.yaml"] as { cancellation?: { late_fee?: number } } | undefined;
+  return fees?.cancellation?.late_fee;
+}
+
 const slotParts = (slotId: string) => {
   const [date, time] = slotId.split("T");
   return { date: date ?? slotId, time: time ?? "" };
@@ -603,6 +836,67 @@ export async function turn(
   s.pendingMemory = undefined;
 
   s.history.push({ role: "user", content: input });
+
+  // ── ESCALATION CHECKS RUN BEFORE THE MODEL DOES ────────────────
+  //
+  // Not for cost. An LLM should not be composing a first response to a
+  // bereavement, however good it would be at it, and an agent that
+  // "considers" a request for a human before granting it has already
+  // failed the member.
+
+  // Already handed to a person, and the trigger was one that must not
+  // route them back into software.
+  if (s.halted) {
+    return [
+      {
+        kind: "text",
+        text:
+          `The club secretary has your details and will be in touch. ` +
+          `Your reference is ${s.halted.ref}.`,
+      },
+    ];
+  }
+
+  // Frustration only counts alongside a refusal — see refusedLastTurn.
+  if (s.refusedLastTurn && soundsFrustrated(input)) {
+    const why = s.refusedLastTurn;
+    s.refusedLastTurn = undefined;
+    return [
+      escalate(
+        s,
+        "refused_and_frustrated",
+        `Refused: ${why}. The member is unhappy with the decision.`,
+        [],
+        "frustrated",
+      ),
+    ];
+  }
+  s.refusedLastTurn = undefined;
+
+  // Loaded once per session, refreshed after any write. A failure here
+  // is not fatal — the model falls back to list_my_bookings.
+  if (s.bookings === undefined) {
+    s.bookings = await listBookings(s.memberId)
+      .then(({ bookings }) => bookings)
+      .catch(() => []);
+  }
+
+  const vuln = vulnerability(input);
+  if (vuln) {
+    // Unconditional. The original task is ABANDONED, not completed
+    // first — someone telling you a spouse has died is not a member
+    // with a booking query who also mentioned something.
+    const r = escalate(s, vuln, input.trim(), [], "vulnerable — handle personally");
+    if (r.kind === "escalated") s.halted = r.handoff;
+    return [r];
+  }
+
+  if (askedForAHuman(input)) {
+    // ALWAYS HONOURED, NEVER NEGOTIATED. The conversation is not
+    // halted — they can carry on talking to the agent if they want —
+    // but the callback is booked and nobody argues about it.
+    return [escalate(s, "asked_for_a_human", input.trim(), [], "asked to speak to somebody")];
+  }
 
   // A BARE YES OR NO ANSWERS THE QUESTION WE JUST ASKED. CODE DECIDES.
   //
@@ -710,7 +1004,7 @@ export async function turn(
     for (const block of response.content) {
       if (block.type !== "text" || !block.text.trim()) continue;
       if (calls.length > 0) {
-        out.push({ kind: "trace", tool: "(preamble)", args: {}, note: block.text.trim() });
+        out.push({ kind: "trace", tool: "(preamble)", args: {}, note: block.text.trim(), ok: true });
       } else {
         out.push({ kind: "text", text: block.text.trim() });
       }
@@ -723,7 +1017,28 @@ export async function turn(
 
     for (const call of calls) {
       s.step++;
-      const { reply, forModel, effectiveArgs } = await execute(s, call.name, call.input);
+
+      // THE SAME CALL THREE TIMES IS NOT PROGRESS.
+      //
+      // Caught here rather than by the step ceiling because a loop of
+      // three identical calls and a loop of six varied ones are
+      // different problems: this one means the agent is stuck on a
+      // fact it cannot get, which a person can supply in seconds.
+      const signature = `${call.name}:${JSON.stringify(call.input)}`;
+      s.fired.push(signature);
+      if (s.fired.filter((f) => f === signature).length >= 3) {
+        out.push(
+          escalate(
+            s,
+            "went_in_circles",
+            `Agent called ${call.name} with the same arguments three times.`,
+            out,
+            "unknown",
+          ),
+        );
+        return ordered(out);
+      }
+      const { reply, forModel, effectiveArgs, ok, detail } = await execute(s, call.name, call.input);
       // THE TRACE RECORDS WHAT WAS DONE, NOT WHAT WAS ASKED FOR.
       //
       // A guard corrected a party size from four to one and the trace
@@ -736,13 +1051,20 @@ export async function turn(
       // trace that lies about what happened, which is worse than no
       // trace: it is confidently wrong in the one artefact you consult
       // when something has gone wrong.
-      out.push({
+      const trace: Reply = {
         kind: "trace",
         tool: call.name,
         args: effectiveArgs ?? call.input,
         note: forModel,
-      });
-      if (reply) out.push(reply);
+        ok: ok ?? true,
+        detail,
+      };
+      out.push(trace);
+      s.happened.push(trace);
+      if (reply) {
+        out.push(reply);
+        s.happened.push(reply);
+      }
       results.push({ type: "tool_result", tool_use_id: call.id, content: forModel });
 
       // A TOOL IS TERMINAL BECAUSE IT ANSWERED THE MEMBER, NOT BECAUSE
@@ -777,13 +1099,22 @@ export async function turn(
     if (terminated) return ordered(out);
   }
 
-  // Ran out of steps. Say so rather than returning silence — an agent
-  // that stops without explanation is indistinguishable from one that
-  // crashed, and the member cannot tell which.
-  out.push({
-    kind: "error",
-    text: "I'm going round in circles on that one — best to ring the pro shop on the number above.",
-  });
+  // RAN OUT OF STEPS → A PERSON, NOT A DEAD END.
+  //
+  // The previous version apologised and stopped, which leaves the
+  // member with nothing and the club with no record that anything went
+  // wrong. Hitting the ceiling is the clearest possible signal that the
+  // agent is out of its depth, and it was the one signal being thrown
+  // away.
+  out.push(
+    escalate(
+      s,
+      "went_in_circles",
+      `Agent hit the ${MAX_STEPS}-step limit on: "${input.trim()}"`,
+      out,
+      "unknown — the agent did not get far enough to tell",
+    ),
+  );
   return ordered(out);
 }
 
@@ -805,7 +1136,15 @@ async function execute(
   s: Session,
   name: string,
   input: unknown,
-): Promise<{ reply?: Reply; forModel: string; effectiveArgs?: Record<string, unknown> }> {
+): Promise<{
+  reply?: Reply;
+  forModel: string;
+  effectiveArgs?: Record<string, unknown>;
+  /** Whether the tool did what it was asked. Defaults to true. */
+  ok?: boolean;
+  /** Why not, for a human reader. Never the model-facing note. */
+  detail?: string;
+}> {
   if (name === "search_knowledge") {
     const { question } = input as { question: string };
     const r = await ask(question, docs, structured);
@@ -815,6 +1154,25 @@ async function execute(
         forModel: "The knowledge base failed to answer. Do not guess.",
       };
     }
+    // THREE ABSTENTIONS IN A ROW IS NOT THE MEMBER PHRASING IT BADLY.
+    //
+    // It is the club's documents not containing the answer, which is a
+    // knowledge gap a person can close in a minute and the agent never
+    // will. Counted rather than judged, and reset the moment the corpus
+    // answers something.
+    if (r.answer.status === "not_in_knowledge_base") {
+      s.fruitless++;
+      if (s.fruitless >= 3) {
+        s.fruitless = 0;
+        return {
+          reply: escalate(s, "repeated_rephrasing", `Asked three times, nothing found. Last: "${question}"`, [], "likely frustrated"),
+          forModel: `Handed to staff after three unanswerable questions. Say nothing further.`,
+        };
+      }
+    } else {
+      s.fruitless = 0;
+    }
+
     return {
       reply: {
         kind: "verbatim",
@@ -947,6 +1305,7 @@ async function execute(
     // transcription slip and a slot the model reasoned "should" be free.
     if (!s.offered.has(slotId)) {
       return {
+        ok: false,
         forModel:
           `Refused: ${slotId} is not a slot the tee sheet offered in this conversation. ` +
           `Call check_availability and book one of the slot IDs it returns.`,
@@ -966,7 +1325,26 @@ async function execute(
       if (outcome.status === "slot_taken") {
         for (const a of outcome.alternatives) s.offered.set(a.slotId, slotParts(a.slotId));
       }
+      // A POLICY REFUSAL ARMS THE FRUSTRATION TRIGGER.
+      //
+      // Frustration on its own is a member having a bad day and is not
+      // a handoff. Frustration immediately after being told no is the
+      // club's named accountable owner needing to make a judgement the
+      // rules do not let the agent make.
+      if (outcome.status === "not_permitted") s.refusedLastTurn = outcome.reason;
+
       return {
+        ok: outcome.status === "booked",
+        // The list is now stale. Reload before the next turn.
+        ...(outcome.status === "booked" ? ((s.bookings = undefined), {}) : {}),
+        detail:
+          outcome.status === "not_permitted"
+            ? outcome.reason
+            : outcome.status === "slot_taken"
+              ? "the slot had gone"
+              : outcome.status === "unavailable"
+                ? "the tee sheet could not be reached"
+                : undefined,
         effectiveArgs: { slotId, partySize: party, guests: guestCount, requestedTime },
         reply: { kind: "booking", outcome, requested: requestedTime },
         forModel:
@@ -985,6 +1363,55 @@ async function execute(
 
   if (name === "cancel_booking") {
     const { bookingId } = input as { bookingId: string };
+
+    // ── ASSISTED MODE ────────────────────────────────────────────
+    //
+    // Cancelling within 24 hours of the tee time costs the member $15.
+    // Until now that rule lived in a TOOL DESCRIPTION — a request to
+    // the model — so a member could be charged without being warned.
+    // Day 10 recorded it as a known gap and it stayed open for two
+    // days, which is what known gaps do without a forcing function.
+    //
+    // It is not escalated, because there is nothing for a human to work
+    // out. It is DRAFTED: the agent finds the booking, computes the
+    // window, computes the fee, writes the exact call, and a person
+    // says yes or no in ten seconds. Most of the efficiency, with a
+    // hard ceiling on the irreversible part.
+    const booking = await listBookings(s.memberId)
+      .then(({ bookings }) => bookings.find((b) => b.id === bookingId))
+      .catch(() => undefined);
+
+    if (booking) {
+      const [d, t] = booking.slotId.split("T");
+      const teeTime = new Date(`${d}T${t}:00+10:00`);
+      const hours = (teeTime.getTime() - Date.now()) / 3600e3;
+      const fee = lateCancellationFee();
+
+      if (hours < 24 && hours > -24) {
+        const action = actions.propose({
+          ref: `ACT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+          raisedAt: new Date().toISOString(),
+          memberId: s.memberId,
+          tool: "cancel_booking",
+          args: { bookingId, memberId: s.memberId },
+          effect:
+            `Cancel ${d} at ${t} for ${s.memberId}` +
+            (fee ? ` and charge the $${fee} late cancellation fee.` : "."),
+          because: `Only ${Math.max(0, Math.round(hours))}h before the tee time — inside the 24-hour window.`,
+          when: `${d} at ${t}`,
+          fee,
+        });
+        return {
+          ok: false,
+          detail: "inside the 24-hour window; drafted for approval",
+          reply: { kind: "proposed", action },
+          forModel:
+            `NOT cancelled. It is inside the 24-hour window, so it needs a person to approve ` +
+            `the fee. The member has been told. Do not try again and do not promise it is done.`,
+        };
+      }
+    }
+
     try {
       const r = await cancelBooking({
         bookingId,
@@ -993,6 +1420,8 @@ async function execute(
         step: s.step,
       });
       return {
+        ok: r.cancelled,
+        ...((s.bookings = undefined), {}),
         reply: { kind: "cancelled", ok: r.cancelled },
         forModel: `Cancellation reported to the member from the record.`,
       };
@@ -1191,6 +1620,14 @@ async function execute(
             : `Done — ${n} thing${n === 1 ? "" : "s"} deleted. I don't know anything about you now.`,
       },
       forModel: `Erased ${n} memories. You now know nothing about this member.`,
+    };
+  }
+
+  if (name === "hand_to_a_person") {
+    const { reason, summary } = input as { reason: string; summary: string };
+    return {
+      reply: escalate(s, reason, summary, [], "not assessed"),
+      forModel: `Handed to staff. The member has been told. Say nothing further about it.`,
     };
   }
 

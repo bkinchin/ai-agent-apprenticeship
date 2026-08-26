@@ -134,7 +134,7 @@ test("no internal diagnostic ever reaches the member", () => {
 });
 
 test("a trace is never shown to a member at all", () => {
-  assert.equal(memberText({ kind: "trace", tool: "x", args: {}, note: "n" }, contacts, FEE), null);
+  assert.equal(memberText({ kind: "trace", tool: "x", args: {}, note: "n", ok: true }, contacts, FEE), null);
 });
 
 // ═══ knowledge ════════════════════════════════════════════════════

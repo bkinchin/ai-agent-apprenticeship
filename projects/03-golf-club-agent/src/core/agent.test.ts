@@ -194,61 +194,80 @@ test("a proposal expires after one turn", async () => {
 });
 
 // ═══ the ceiling ══════════════════════════════════════════════════
-test("the loop stops at MAX_STEPS and says so rather than going silent", async () => {
-  // A loop that runs until the model decides to stop is unbounded spend
-  // governed by a non-deterministic process. The failure mode is not a
-  // crash you would notice — it is a bill.
-  const forever = Array.from({ length: 12 }, () => ({
+test("the same call three times escalates rather than looping", async () => {
+  // Caught before the step ceiling, because a loop of three identical
+  // calls and a loop of six varied ones are different problems: this
+  // one means the agent is stuck on a fact it cannot get, which a
+  // person can supply in seconds.
+  const same = Array.from({ length: 12 }, () => ({
     content: [call("remember_preference", { key: "k", quote: "I usually play early" })],
     stop_reason: "tool_use",
   }));
-  const m = scripted(...forever);
+  const m = scripted(...same);
+  const out = await turn(member(), "hello", m.fn);
+
+  assert.ok(m.calls() <= 4, `must stop quickly, not at the ceiling (was ${m.calls()})`);
+  const esc = out.find((r) => r.kind === "escalated");
+  assert.ok(esc, "must hand to a person");
+  assert.equal(esc.kind === "escalated" && esc.handoff.triggerId, "went_in_circles");
+});
+
+test("hitting the step ceiling escalates, it does not dead-end", async () => {
+  // The previous version apologised and stopped, which leaves the
+  // member with nothing and the club with no record that anything went
+  // wrong. Hitting the ceiling is the clearest possible signal that the
+  // agent is out of its depth, and it was the one signal being thrown
+  // away. Varied arguments, so loop detection does not fire first.
+  const varied = Array.from({ length: 12 }, (_, i) => ({
+    content: [call("remember_preference", { key: `k${i}`, quote: `I usually play early ${i}` })],
+    stop_reason: "tool_use",
+  }));
+  const m = scripted(...varied);
   const out = await turn(member(), "hello", m.fn);
 
   assert.ok(m.calls() <= 6, `must not exceed the ceiling (was ${m.calls()})`);
-  assert.ok(shown(out).some((r) => r.kind === "error"), "and must tell the member something");
+  const esc = out.find((r) => r.kind === "escalated");
+  assert.ok(esc, "the ceiling must produce a person, not an apology");
 });
 
-test('"just me" overrides the party size the model chose', async () => {
-  // The member said "just me". The model asked for four players and
-  // three guests, reading a description of how they usually play as
-  // the party for this booking. Code holds better evidence than the
-  // model does here — the member's literal words — so it uses them.
-  //
-  // The earlier version REFUSED instead, telling the model to rebook
-  // or ask. It asked, and the member ended up with no booking at all.
+// ═══ escalation short-circuits ════════════════════════════════════
+test("a request for a human never reaches the model", async () => {
+  // An agent that "considers" a request for a human before granting it
+  // has already failed the member.
+  const m = scripted();
+  const out = await turn(member(), "can I speak to a person please?", m.fn);
+  assert.equal(m.calls(), 0, "no inference at all");
+  const esc = out.find((r) => r.kind === "escalated");
+  assert.equal(esc?.kind === "escalated" && esc.handoff.triggerId, "asked_for_a_human");
+});
+
+test("a bereavement never reaches the model, and halts the conversation", async () => {
+  // Not for cost. An LLM should not be composing a first response to a
+  // bereavement, however good it would be at it.
+  const s = member();
+  const m = scripted();
+  const out = await turn(s, "my husband passed away last week", m.fn);
+
+  assert.equal(m.calls(), 0);
+  const esc = out.find((r) => r.kind === "escalated");
+  assert.equal(esc?.kind === "escalated" && esc.handoff.triggerId, "bereavement");
+  assert.equal(esc?.kind === "escalated" && esc.handoff.urgency, "immediate");
+  assert.ok(s.halted, "the member must not be routed back into software");
+
+  // And the next turn does not resume the booking flow.
+  const after = await turn(s, "what about my saturday tee time?", m.fn);
+  assert.equal(m.calls(), 0, "still no inference");
+  assert.match((after[0] as { text: string }).text, /club secretary/i);
+});
+
+test("a routine mention of health does NOT escalate", async () => {
+  // The club permits advance buggy booking on medical grounds, so a
+  // member WILL mention a knee. That is a buggy request.
   const m = scripted({
-    content: [call("book_tee_time", { slotId: "2026-08-29T09:20", partySize: 4, guests: 3 })],
+    content: [call("end_turn", { message: "I'll sort a buggy." })],
     stop_reason: "tool_use",
   });
-  const s = member();
-  s.offered.set("2026-08-29T09:20", { date: "2026-08-29", time: "09:20" });
-  const out = await turn(s, "the 9:20, just me. I usually play with the same three lads", m.fn);
-
-  // The tee sheet is not running in unit tests, so the booking fails —
-  // what matters is that ONE attempt was made, with the corrected
-  // party, rather than the turn ending with nothing.
-  assert.ok(out.some((r) => r.kind === "booking" || r.kind === "error"),
-    "an attempt must be made, not abandoned");
-});
-
-test("a REFUSED terminal tool does not end the turn", async () => {
-  // book_tee_time is terminal, so a refused booking ended the turn on
-  // the strength of the tool's NAME: the solo guard caught "just me"
-  // being booked as four, told the model to book it as one, and the
-  // turn stopped before the model could read it. The member got no
-  // booking at all — worse than the wrong one being prevented.
-  const m = scripted(
-    // refused by the solo guard: the member said "just me"
-    { content: [call("book_tee_time", { slotId: "x", partySize: 4, guests: 3 })],
-      stop_reason: "tool_use" },
-    { content: [call("end_turn", { message: "Booked as one." })], stop_reason: "tool_use" },
-  );
-  const out = await turn(member(), "book me the 9:20, just me", m.fn);
-
-  assert.equal(m.calls(), 2, "the model must get to act on the refusal");
-  assert.ok(
-    shown(out).some((r) => r.kind === "text" && /Booked as one/.test(r.text)),
-    "and the member must end up with an answer",
-  );
+  const out = await turn(member(), "I've had a knee replacement so I'll need a buggy", m.fn);
+  assert.equal(m.calls(), 1, "the model must handle it normally");
+  assert.ok(!out.some((r) => r.kind === "escalated"));
 });

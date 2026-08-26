@@ -1,0 +1,158 @@
+# When the agent stops, who it goes to, and what the member is told.
+#
+# Structured rather than narrative for the day-9 reason: every field has
+# exactly one right value, so it is a lookup, not a document. It sits
+# beside contacts.yaml because these are THIS CLUB'S decisions, not a
+# reusable mechanism — CLAUDE.md promotes to shared/ only after a second
+# user, and there isn't one yet.
+#
+# ESCALATION IS NOT THE AGENT FAILING. Of the first five situations the
+# club named, only two will always need a person:
+#
+#   frustrated + policy refusal    human judgement. Never goes away.
+#   bereavement                    a person. Never goes away.
+#   bank holiday hours             MISSING KNOWLEDGE — four lines of yaml
+#   competition results            MISSING TOOL — no data source yet
+#   membership enquiry             OUT OF SCOPE by PRD decision
+#
+# Three of five are things the agent could do and cannot yet, which is
+# why every escalation records `missing`. Sorted by volume, that field
+# is the product roadmap. Without it the queue says the agent gave up
+# and not why, and the why is the actionable half.
+#
+# A ZERO ESCALATION RATE IS A RED FLAG. It means the agent is attempting
+# things it should not.
+
+meaning: >
+  Escalation triggers, their urgency, the team that owns them, and what
+  the member is told. `missing` classifies what the agent lacked, for
+  the improvement loop.
+
+owner: Pro Shop Manager
+last_updated: 2026-08-26
+review_due: 2027-02-26
+
+# ── urgency, expressed as a PROMISE TO THE MEMBER ────────────────
+#
+# The club is staffed 08:00-16:30. The PRD's whole premise is
+# out-of-hours demand, so most escalations are raised when nobody is
+# there. "Urgent" as a queue priority the member cannot see is a lie
+# they will measure against silence; "before 10am tomorrow" is a promise
+# they can hold you to.
+urgency:
+  immediate:
+    meaning: "First thing, ahead of the queue. If out of hours, before 10:00 next opening."
+    tell_member: "first thing tomorrow morning"
+    tell_member_in_hours: "within the hour"
+  same_day:
+    meaning: "Before the pro shop closes at 16:30, or by 16:30 next opening day."
+    tell_member: "by the end of tomorrow"
+    tell_member_in_hours: "before we close at 4:30 today"
+  next_working_day:
+    meaning: "Whenever someone picks it up. No promise beyond the next working day."
+    tell_member: "in the next day or so"
+    tell_member_in_hours: "in the next day or so"
+
+triggers:
+  # ── source: requested ──────────────────────────────────────────
+  # ALWAYS HONOURED, IMMEDIATELY, NEVER NEGOTIATED. An agent that
+  # argues with a request for a human generates complaints out of all
+  # proportion to its accuracy.
+  - id: asked_for_a_human
+    source: requested
+    urgency: same_day
+    team: pro_shop
+    missing: none
+    member_message: >
+      Of course — I'll get someone from the pro shop to call you.
+
+  # ── source: emotional / vulnerability ──────────────────────────
+  # Unconditional and immediate. Never attempt to handle it, never ask
+  # a follow-up question, never continue the original task.
+  #
+  # These are the day-11 memory exclusion categories, reached from the
+  # other direction: one asks what must not be STORED, this asks what
+  # must not be HANDLED. Same list, different threshold — "I've had a
+  # knee replacement so I'll need a buggy" is a routine buggy request,
+  # and "my husband died" is not a request at all.
+  - id: bereavement
+    source: emotional
+    urgency: immediate
+    team: club_secretary
+    missing: none
+    member_message: >
+      I'm very sorry. I'll ask the club secretary to contact you
+      personally — you won't need to go through any of this again.
+
+  - id: distress
+    source: emotional
+    urgency: immediate
+    team: club_secretary
+    missing: none
+    member_message: >
+      I think this is better handled by a person. I'll ask the club
+      secretary to call you.
+
+  # ── source: policy ─────────────────────────────────────────────
+  # Deterministic, from code. The refusal itself is correct; what
+  # escalates is the member's reaction to it.
+  - id: refused_and_frustrated
+    source: policy
+    urgency: immediate
+    team: pro_shop
+    missing: judgement
+    member_message: >
+      I can't get round that rule myself, but the pro shop manager can
+      look at it properly.
+
+  # ── source: capability ─────────────────────────────────────────
+  # The interesting ones. Each names what is MISSING, so the queue
+  # doubles as a backlog.
+  - id: membership_enquiry
+    source: capability
+    urgency: same_day
+    team: pro_shop
+    # A PRD decision, not a gap. Membership sits below the v1 line
+    # because a wrong answer surfaces months later as "I was told I
+    # could". This one is expected to escalate forever.
+    missing: out_of_scope
+    member_message: >
+      Someone from the pro shop will talk you through joining.
+
+  - id: competition_results
+    source: capability
+    urgency: next_working_day
+    team: competition_secretary
+    missing: tool
+    member_message: >
+      I don't have results — the competition secretary will have them.
+
+  - id: not_in_knowledge_base
+    source: capability
+    urgency: next_working_day
+    team: club_secretary
+    missing: knowledge
+    member_message: >
+      I don't have anything on that, so I'll pass it to the club
+      secretary.
+
+  # ── source: structural ─────────────────────────────────────────
+  # The agent noticing its own behaviour. A loop or a step limit
+  # currently produces a dead end; both should produce a person.
+  - id: went_in_circles
+    source: structural
+    urgency: same_day
+    team: pro_shop
+    missing: judgement
+    member_message: >
+      I'm not getting anywhere with this — let me pass you to the pro
+      shop rather than keep you here.
+
+  - id: repeated_rephrasing
+    source: structural
+    urgency: same_day
+    team: pro_shop
+    missing: knowledge
+    member_message: >
+      I don't think I'm understanding what you need. The pro shop will
+      sort it out faster than I will.
