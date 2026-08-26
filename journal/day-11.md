@@ -41,11 +41,13 @@ A ticket. As memory the `status` field freezes at the moment it was written and 
 
 ---
 
-## The write policy failed twice, and the second was my fix
+## The write policy failed four times
 
-**Explicit only** was the chosen policy — nothing stored unless the member asks.
+**Explicit only** was the chosen policy — nothing stored unless the member asks. It took four attempts, and **each fix created the next failure.**
 
-**As a prompt instruction it lasted two conversations.** Told *"the 9:20, just me. I usually play early with the same three lads"*, the model stored:
+### 1. As a prompt instruction it lasted two conversations
+
+The tool said *"never call this because a preference seemed implied."* Told *"the 9:20, just me. I usually play early with the same three lads"*, the model stored:
 
 ```
 group_size = "4 players: member plus 3 regular mates"
@@ -53,7 +55,9 @@ group_size = "4 players: member plus 3 regular mates"
 
 An inference, from an aside, inside a booking request — now injected into every future conversation, biasing later bookings toward four players. **A wrong memory doesn't sit still being wrong. It reproduces.**
 
-**My first code fix was worse.** I let a bare affirmative authorise a write, reasoning the model would only ask immediately before storing. It didn't:
+### 2. My code fix let any "yes" authorise a write
+
+I reasoned the model would only ask immediately before storing. It didn't:
 
 ```
 agent   "Will 9:30 work, or would you prefer 9:10?"
@@ -63,9 +67,63 @@ model   remember_preference(... quote from two turns ago ...)
 
 > **The member agreed to a tee time and got a memory.**
 
-The draft now lives in code, survives exactly one turn, and cannot be substituted by the model. A yes meant for another question has nothing to unlock. Which is how the curriculum's *fourth* write policy — human-confirmed — gets reached by closing the hole in the *first*.
+So the draft moved into code, survives one turn, and cannot be substituted by the model.
+
+### 3. The draft was armed without anyone being asked
+
+The refusal told the *model* to ask. It couldn't: the call arrived batched with `book_tee_time`, which is terminal, so the turn ended in the same iteration. The member was never asked — **and the draft was armed anyway**, so a stray "yes" later would have committed a memory nobody was offered. The bug from #2, back through a different door.
+
+Code now asks in the same statement that arms it. **If we armed it, we asked.**
+
+### 4. The exclusion list was reading the model's homework
+
+A member said *"I've had a knee replacement so remember I'll always need a buggy"* and it was **stored**. The health rule never saw the medical clause, because the model handed over the quote `"I'll always need a buggy"` — correctly, by a tool description I'd written three commits earlier asking for the part that states the preference.
+
+Two guards ran on the same turn from different sources of truth:
+
+```
+write policy    checks lastMemberTurn(s)   the member's actual words
+exclusion list  checked the model's quote  whatever it chose to pass
+```
+
+The second is the model marking its own homework, which is precisely what the first was built to avoid. **Two guards on one turn must not disagree about where the truth is.**
 
 ---
+
+## The paraphrase that shouldn't have existed
+
+The consent question read: *"Would you like me to remember that for next time — `"early"`?"*
+
+`"early"` was a **storage value** — the model's short label for a column — and a poor thing to ask somebody to agree to. Fixing the wording exposed the better question: *why is there a paraphrase at all?*
+
+The store held two strings for one fact. The member's own words were shorter, clearer, unambiguous, and already required for provenance. The paraphrase bought nothing and inserted a model-authored step into **the one place where being exactly right is the entire product**.
+
+Removed. The quote is the memory. They diverge only when a member deliberately corrects something, and then the display says so and keeps the original visible.
+
+---
+
+## Four more from one pasted transcript
+
+A single conversation, read carefully:
+
+| | |
+|---|---|
+| *"Let me book that and **save that you like to play early**"* | The save was then refused. A **preamble** — an intention stated before code decided |
+| The "shall I note that?" recovery was unreachable | Batched with a terminal tool |
+| **"no thanks" → `cancel_booking`** | They declined a *memory offer*. It failed only because it passed a slot id where a booking id belonged |
+| 9:40 requested, 9:50 booked, silently | Truthful, and never mentioned it wasn't what they asked for |
+
+The third is the one that matters. And it's the third appearance of one shape:
+
+```
+day 6   (project 01)  "ok go on then"  → recorded as a cancellation
+day 11                "yes please"     → spent on a memory
+day 11                "no thanks"      → nearly cancelled a booking
+```
+
+> **A bare yes or no is meaningless without the question it answers — and a model asked to infer which question will sometimes pick the destructive reading.**
+
+Now answered in code, before the model is called at all. We know which question was asked, because we asked it.
 
 ## The planted wrong memory did something I didn't predict
 
@@ -155,6 +213,58 @@ The whole list is shown rather than a summary, because a summary of what you kno
 The store is the easy part and the only part currently solved. **An erasure request today would be answered honestly with "mostly"** — and the un-erasable copy is the one created by using the memory, not by storing it.
 
 That is an argument for storing the *least* that works, which is what the lookup rule already produced for different reasons.
+
+---
+
+## The reason all of this was found by hand
+
+Every defect above came from a person typing at the agent. None came from the suite. There was a reason:
+
+```
+agent.ts     1112 lines   the largest file in the project.   ZERO tests.
+```
+
+No test called `turn()`. `isNegative` — the function standing between *"no thanks"* and a cancelled booking — had **no test at all**, an hour after being written to fix exactly that.
+
+The cause was one line: `client.messages.create`, hardcoded. Testing the loop needed an API key, a network and a non-deterministic model, so it never happened. Which is CLAUDE.md's own review question, failing:
+
+> *"Is it testable without an LLM? If not, the logic and the model call are tangled."*
+
+The model is now a parameter. **Twelve loop defects are scripted responses with fixed assertions**, and four controls confirm they bite: removing preamble suppression, the yes/no short-circuit, forced `tool_choice` and aside ordering fails 1, 2, 1 and 1 tests.
+
+---
+
+## A conversational golden set, and what it caught in its first hour
+
+Seven cases, asserted on **tool arguments** rather than prose — because every dangerous thing this agent has done was visible in an argument and invisible in the reply.
+
+It found three things immediately:
+
+**The $60 bug was never fixed.** I'd fixed *detection* — the confirmation names the party and the fee — and told myself that was the fix. It isn't: by the time the member objects, the booking is on the sheet and the guest allowance is spent.
+
+**My prevention then broke something worse.** The guard refused the booking, and `book_tee_time` is terminal, so the turn ended before the model could read the refusal. **The member got no booking at all.** A tool is terminal because it *answered the member*, not because of its name.
+
+**Refusing was the wrong instrument anyway.** My refusal offered the model a choice — *"book it as one player, or ask them"* — and it asked, leaving the member with nothing. Offering a choice put back exactly the non-determinism the guard removed. Code now believes the member: *"just me"* means one player.
+
+### The lesson from the controls
+
+Disabling the yes/no short-circuit left the suite **green**. That turn, the model happened not to reach for `cancel_booking`.
+
+With `runs: 3` it failed on run 3 — putting the rate near **one in three**. A single-run suite would have missed it two times out of three while reporting green.
+
+> **A single run of a probabilistic failure is a weak test**, and I nearly shipped it as a strong one.
+
+### And the eval's own first assertion was wrong
+
+It matched *attempted* calls, so it failed a case where the agent had done exactly the right thing — caught a bad party size and corrected it. That would have taught us to distrust a working guard. **A detector that reports failures it cannot substantiate**, for the third time in this project.
+
+---
+
+## Two mistakes worth keeping
+
+**The trace lied.** A guard corrected a party size from four to one and the trace still showed four, because it logged the model's *arguments*. Everything downstream read a request as an outcome. A trace that shows the request but not the correction is **worse than no trace** — it is confidently wrong in the one artefact you consult when something has gone wrong.
+
+**I committed on a red suite.** Tailed the output to six lines, the failure was above the fold, and it went in while I wrote that everything passed. The suite worked; the person reading it did not. Same failure as the judge that scored a dead API: the number was present, plausible, and unread.
 
 ---
 
