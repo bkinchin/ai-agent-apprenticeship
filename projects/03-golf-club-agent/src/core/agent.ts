@@ -55,6 +55,7 @@ import {
   statedAsStanding,
   type Memory,
 } from "../memory/store.js";
+import { memoryOfferText } from "./render.js";
 import { ask, MODEL, type Answer } from "./answer.js";
 import { loadDocuments, loadStructured } from "./corpus.js";
 
@@ -242,8 +243,15 @@ const MAX_STEPS = 6;
 const TERMINAL = new Set([
   "search_knowledge",
   "end_turn",
-  // Memory is shown from the store, not described by the model.
+  // Memory is shown from the store, not described by the model — and
+  // the same goes for changing it. A correction produced "Updated —
+  // thanks." from code and then "Done — I've updated that." from the
+  // model on a second inference, because these two were not terminal.
+  // If code writes the reply there is nothing left for the model to
+  // add, and what it adds is a second voice saying the same thing.
   "show_what_you_know",
+  "update_what_you_know",
+  "forget_everything",
   // WRITES ARE REPORTED BY CODE, NOT NARRATED BY THE MODEL.
   //
   // `check_availability` is deliberately NOT here: availability is
@@ -358,13 +366,16 @@ const TOOLS: Tool[] = [
             "A stable snake_case name for the KIND of preference, so a later statement " +
             "replaces this one: preferred_tee_time, contact_method, group_size, buggy.",
         },
-        value: { type: "string", description: "One short phrase. 'before 09:00'." },
         quote: {
           type: "string",
-          description: "The member's own words, verbatim. Required — this is what we show them.",
+          description:
+            "The member's own words, verbatim and trimmed to the part that states the " +
+            "preference — 'I usually play early', not the whole sentence. THIS IS THE " +
+            "MEMORY: it is what we store, what we show them, and what you will be told " +
+            "next time. Do not paraphrase it.",
         },
       },
-      required: ["key", "value", "quote"],
+      required: ["key", "quote"],
     },
   },
   {
@@ -888,7 +899,25 @@ async function execute(
   }
 
   if (name === "remember_preference") {
-    const { key, value, quote } = input as { key: string; value: string; quote: string };
+    const { key, quote } = input as { key: string; quote: string };
+
+    // THE MEMBER'S WORDS ARE THE MEMORY.
+    //
+    // There used to be a separate model-written `value` — a short
+    // paraphrase for the column. It produced "tee times early" from "I
+    // usually play early", which was then read back to the member as
+    // the thing they were being asked to agree to, and earlier "early",
+    // which is not a sentence at all.
+    //
+    // A paraphrase adds a step where the model can garble or infer, in
+    // the one place where being exactly right is the entire product. It
+    // bought nothing: the quote is shorter, clearer, unambiguous, and
+    // already required for provenance.
+    //
+    // Correcting a memory replaces the value with the member's
+    // correction and leaves the quote as the original, so the two
+    // diverge only when a person has deliberately changed something.
+    const value = quote.trim().replace(/^["']|["']$/g, "");
 
     // THE WRITE POLICY, ENFORCED IN CODE.
     //
@@ -921,7 +950,7 @@ async function execute(
       return {
         reply: {
           kind: "aside",
-          text: `Would you like me to remember that for next time — "${value}"?`,
+          text: memoryOfferText(quote),
         },
         forModel:
           `Not stored — the member described a habit rather than asking you to remember it. ` +

@@ -11,7 +11,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { memberText, type Contact } from "./render.js";
+import { memberText, memoryOfferText, type Contact } from "./render.js";
 import type { Reply } from "./agent.js";
 
 const contacts: Record<string, Contact> = {
@@ -172,24 +172,67 @@ test("staleness reaches the member but citations do not", () => {
 // ═══ memory ═══════════════════════════════════════════════════════
 test("showing memories shows the receipt, not just the belief", () => {
   // "We think you prefer mornings" is surveillance. "You said, on this
-  // date, in these words" is a receipt.
+  // date, in these words" is a receipt. The member's words ARE the
+  // memory, so there is no paraphrase to disagree with.
   const t = show({
     kind: "memories",
     memories: [{
       id: "1", subjectId: "M-1001", type: "preference",
-      key: "preferred_tee_time", value: "before 09:00", confidence: 0.95,
+      key: "preferred_tee_time",
+      value: "I always want to play before 9am",
+      confidence: 0.95,
       source: { sessionId: "S", turnIndex: 1, quote: "I always want to play before 9am" },
       createdAt: "2026-03-03T00:00:00Z", lastConfirmedAt: "2026-03-03T00:00:00Z",
       expiresAt: "2027-03-03T00:00:00Z",
     }],
   });
-  assert.match(t, /before 09:00/);
-  assert.match(t, /3 March 2026/, "when they said it");
   assert.match(t, /I always want to play before 9am/, "their own words");
+  assert.match(t, /3 March 2026/, "when they said it");
   assert.match(t, /delete/i, "and how to get rid of it");
+  assert.doesNotMatch(t, /you changed this/, "nothing was changed");
+});
+
+test("a corrected memory keeps the original visible", () => {
+  // Value and quote diverge only when a person deliberately changed
+  // something — and then the original is the evidence for a belief they
+  // have since replaced, which is worth being able to see.
+  const t = show({
+    kind: "memories",
+    memories: [{
+      id: "1", subjectId: "M-1001", type: "preference",
+      key: "preferred_tee_time", value: "afternoons", confidence: 1,
+      source: { sessionId: "S", turnIndex: 1, quote: "I always want to play before 9am" },
+      createdAt: "2026-03-03T00:00:00Z", lastConfirmedAt: "2026-09-01T00:00:00Z",
+      expiresAt: "2027-09-01T00:00:00Z",
+    }],
+  });
+  assert.match(t, /afternoons/, "what we now believe");
+  assert.match(t, /you changed this/);
+  assert.match(t, /1 September 2026/, "when they changed it");
+  assert.match(t, /I always want to play before 9am/, "and what it replaced");
 });
 
 test("an empty memory store says so plainly", () => {
   const t = show({ kind: "memories", memories: [] });
   assert.match(t, /don't know anything about you/i);
+});
+
+// ═══ the offer to remember ════════════════════════════════════════
+test("the offer quotes the member, not the storage value", () => {
+  // It read: `Would you like me to remember that — "early"?`
+  // "early" is a column value the model picked. A member cannot tell
+  // what would be kept or what it would do, so the consent is not
+  // informed.
+  const t = memoryOfferText("I usually play early");
+  assert.match(t, /I usually play early/, "their words, so there is no ambiguity");
+  assert.match(t, /next time you book/, "and what it would actually do");
+  assert.doesNotMatch(t, /^Would you like me to remember that for next time — "early"/);
+});
+
+test("the offer survives a quote that arrives already quoted", () => {
+  assert.equal(
+    memoryOfferText('"I usually play early"'),
+    memoryOfferText("I usually play early"),
+    "no doubled quote marks",
+  );
 });

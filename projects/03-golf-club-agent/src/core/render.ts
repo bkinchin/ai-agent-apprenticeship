@@ -227,7 +227,14 @@ export function memberText(
       const when = new Date(m.lastConfirmedAt).toLocaleDateString("en-AU", {
         day: "numeric", month: "long", year: "numeric", timeZone: "Australia/Sydney",
       });
-      return `  · ${m.value}\n    you said on ${when}: "${m.source.quote}"`;
+      const quote = m.source.quote.trim().replace(/^["']|["']$/g, "");
+      // Value and quote are the same string until a member CORRECTS a
+      // memory, so showing both by default was showing one fact twice.
+      // When they diverge, the original is worth keeping visible: it is
+      // the evidence for a belief the member has since changed.
+      return m.value === quote
+        ? `  · "${quote}"\n    noted ${when}`
+        : `  · ${m.value}\n    you changed this on ${when} — you'd said "${quote}"`;
     });
     return (
       `Here's everything I've got written down about you:\n\n${items.join("\n\n")}\n\n` +
@@ -266,6 +273,31 @@ export function memberText(
   }
 
   return text;
+}
+
+/**
+ * The offer to remember something.
+ *
+ * The first version read: `Would you like me to remember that for next
+ * time — "early"?`
+ *
+ * "early" is a STORAGE VALUE. The model chose it to be a short, stable
+ * thing to put in a column, and it is a poor thing to ask somebody to
+ * consent to — it is not a sentence, and a member cannot tell what
+ * would be kept or what it would do.
+ *
+ * Consent has to be informed, so the offer uses the field that cannot
+ * be ambiguous: THE MEMBER'S OWN WORDS. We already require the quote,
+ * for exactly this reason one layer along — it is what makes
+ * show_what_you_know read as a receipt rather than as surveillance.
+ *
+ * It also states the EFFECT. "Remember that" is a filing decision;
+ * "look for early slots first next time" is what actually happens to
+ * them, and it is the part worth agreeing or objecting to.
+ */
+export function memoryOfferText(quote: string): string {
+  const q = quote.trim().replace(/^["']|["']$/g, "");
+  return `You said "${q}" — shall I make a note of that, so I go on it next time you book?`;
 }
 
 /**
