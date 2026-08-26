@@ -9,6 +9,8 @@
 
 import { spawn } from "node:child_process";
 import { z } from "zod";
+import { rulesFrom } from "../core/rules.js";
+import { loadStructured } from "../core/corpus.js";
 import { bookTeeTime, cancelBooking, checkAvailability } from "../tools/tee-sheet.js";
 import { resetCircuit } from "../tools/client.js";
 import { clearAll, forget, pending } from "../tools/idempotency.js";
@@ -33,6 +35,7 @@ const reset = async () => {
 const state = () =>
   api("/_state") as Promise<{ bookings: { id: string; slotId: string }[]; holds: unknown[] }>;
 
+const clubRules = rulesFrom(loadStructured());
 const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 const SLOT = `${tomorrow}T09:20`;
 
@@ -78,8 +81,8 @@ try {
   await reset();
   {
     const [a, b] = await Promise.all([
-      bookTeeTime({ slotId: SLOT, memberId: "M-1001", partySize: 2, guests: 0, sessionId: "S-a", step: 1 }),
-      bookTeeTime({ slotId: SLOT, memberId: "M-1002", partySize: 2, guests: 0, sessionId: "S-b", step: 1 }),
+      bookTeeTime({ slotId: SLOT, memberId: "M-1001", partySize: 2, guests: 0, sessionId: "S-a", clubRules, step: 1 }),
+      bookTeeTime({ slotId: SLOT, memberId: "M-1002", partySize: 2, guests: 0, sessionId: "S-b", clubRules, step: 1 }),
     ]);
     const world = await state();
     const winners = [a, b].filter((r) => r.status === "booked");
@@ -187,7 +190,7 @@ try {
   {
     const session = "S-rebook";
     const first = await bookTeeTime({
-      slotId: SLOT, memberId: "M-1001", partySize: 1, guests: 0, sessionId: session, step: 1,
+      slotId: SLOT, memberId: "M-1001", partySize: 1, guests: 0, sessionId: session, clubRules, step: 1,
     });
     if (first.status !== "booked") throw new Error(`setup failed: ${first.status}`);
 
@@ -196,7 +199,7 @@ try {
     });
 
     const second = await bookTeeTime({
-      slotId: SLOT, memberId: "M-1001", partySize: 1, guests: 0, sessionId: session, step: 3,
+      slotId: SLOT, memberId: "M-1001", partySize: 1, guests: 0, sessionId: session, clubRules, step: 3,
     });
 
     check("the rebooking succeeded", second.status === "booked", `(${second.status})`);

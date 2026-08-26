@@ -11,6 +11,7 @@
 // The model proposes ONE intent. Code owns the whole transaction.
 
 import { z } from "zod";
+import { checkBooking, reconcileLimit, type ClubRules } from "../core/rules.js";
 import { request, ToolError } from "./client.js";
 import { idempotencyKey, once } from "./idempotency.js";
 
@@ -220,6 +221,8 @@ export async function bookTeeTime(args: {
   partySize: number;
   guests: number;
   sessionId: string;
+  /** The club's rules. Passed in so this layer cannot invent them. */
+  clubRules: ClubRules;
   /**
    * Monotonic within the session. NOT optional, and never a constant.
    *
@@ -236,6 +239,23 @@ export async function bookTeeTime(args: {
   step: number;
 }): Promise<BookOutcome> {
   const [date, time] = args.slotId.split("T");
+
+  // THE CLUB'S RULES ARE ENFORCED HERE, NOT IN THE LAYER ABOVE.
+  //
+  // They were checked in the agent's tool handler, so calling this
+  // function directly bypassed every one of them — which an audit
+  // script did, booking four guests against a two-guest rule, and
+  // which the reliability suite does on every run.
+  //
+  // Day 10's argument was that the model sees ONE tool and code owns
+  // the whole transaction. A rule enforced one layer above the
+  // transaction is not owned by it: it holds for the caller who
+  // happened to be written first, and for nobody else.
+  //
+  // Before the hold, because a refused booking should not have claimed
+  // a slot on the way to being refused.
+  const violation = checkBooking({ slotId: args.slotId, guests: args.guests }, args.clubRules);
+  if (violation) return { status: "not_permitted", reason: violation.member };
 
   let hold: { holdId: string } | undefined;
   try {
@@ -275,15 +295,42 @@ export async function bookTeeTime(args: {
   try {
     // 2 ── validate while holding
     const allowance = await getMemberAllowance(args.memberId);
-    if (allowance.liveBookings >= allowance.maxLiveBookings) {
+
+    // THE SUPPLIER'S LIMITS ARE CROSS-CHECKED, NOT TRUSTED.
+    //
+    // These came straight from the allowance endpoint. If the sheet is
+    // edited to allow three live bookings, the club's rule quietly
+    // stops applying and nobody finds out, because the agent's
+    // behaviour still looks correct. The rulebook is the policy; the
+    // supplier is a data store that happens to carry a copy.
+    const live = reconcileLimit(args.clubRules.maxLivePerMember, allowance.maxLiveBookings, "live bookings");
+    // PER CATEGORY, NOT A FLAT NUMBER.
+    //
+    // booking-rules.yaml says 6 guests a month; fees.yaml says 6 for
+    // full members, 4 for country and midweek, 2 for junior, 0 for
+    // social. Two sources of truth for one rule, and the flat one was
+    // being compared against a category-aware supplier — so every
+    // midweek member produced a "disagreement" that was really the
+    // rulebook being less precise than the sheet.
+    const clubMonthly =
+      args.clubRules.guestsPerMonthByCategory[allowance.category] ??
+      args.clubRules.maxGuestsPerMonth;
+    const monthly = reconcileLimit(clubMonthly, allowance.maxGuestsPerMonth, "guests per month");
+    for (const d of [live.disagreement, monthly.disagreement]) {
+      // Surfaced, not resolved silently — one of the two is wrong and
+      // somebody should know which.
+      if (d) console.warn(`  ⚠ rule disagreement — ${d}`);
+    }
+
+    if (allowance.liveBookings >= live.limit) {
       throw new NotPermitted(
         `you already have ${allowance.liveBookings} live bookings, which is the maximum`,
       );
     }
-    if (args.guests > 0 && allowance.guestsUsedThisMonth + args.guests > allowance.maxGuestsPerMonth) {
+    if (args.guests > 0 && allowance.guestsUsedThisMonth + args.guests > monthly.limit) {
       throw new NotPermitted(
         `that would use ${allowance.guestsUsedThisMonth + args.guests} guests this month, ` +
-          `and your allowance is ${allowance.maxGuestsPerMonth}`,
+          `and your allowance is ${monthly.limit}`,
       );
     }
 

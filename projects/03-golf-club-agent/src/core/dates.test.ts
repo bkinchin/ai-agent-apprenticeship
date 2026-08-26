@@ -39,7 +39,10 @@ test("rejects yesterday", () => {
 test("enforces the club's six-week booking window", () => {
   // booking-rules.yaml: members may book up to six weeks ahead.
   assert.equal(dateProblem("2026-10-01", NOW), undefined, "41 days is inside");
-  assert.match(dateProblem("2026-10-05", NOW) ?? "", /six weeks/, "45 days is outside");
+  // The message now names the number from booking-rules.yaml rather
+  // than the phrase "six weeks", because the limit is read rather than
+  // hardcoded and the two could drift apart.
+  assert.match(dateProblem("2026-10-05", NOW) ?? "", /42 days/, "45 days is outside");
 });
 
 test("rejects things that are not dates", () => {

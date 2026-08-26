@@ -15,7 +15,9 @@ import { bookTeeTime } from "../tools/tee-sheet.js";
 import { circuitState, resetCircuit } from "../tools/client.js";
 import { ask } from "../core/answer.js";
 import { loadDocuments, loadStructured } from "../core/corpus.js";
+import { rulesFrom } from "../core/rules.js";
 
+const clubRules = rulesFrom(loadStructured());
 const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 const SLOT = `${tomorrow}T10:40`;
 const docs = loadDocuments();
@@ -26,7 +28,7 @@ await new Promise((r) => setTimeout(r, 3000));
 
 console.log("\n─── tee sheet UP ───────────────────────────────────");
 const ok = await bookTeeTime({
-  slotId: SLOT, memberId: "M-1002", partySize: 2, guests: 0, sessionId: "S-up", step: 1,
+  slotId: SLOT, memberId: "M-1002", partySize: 2, guests: 0, sessionId: "S-up", clubRules, step: 1,
 });
 console.log(`  booking: ${ok.status}${ok.status === "booked" ? `  ${ok.bookingId}` : ""}`);
 
@@ -39,7 +41,7 @@ console.log("\n─── tee sheet DOWN ─────────────�
 
 // 1. Booking fails — but as an outcome, not an exception.
 const down = await bookTeeTime({
-  slotId: `${tomorrow}T10:50`, memberId: "M-1002", partySize: 2, guests: 0, sessionId: "S-down", step: 1,
+  slotId: `${tomorrow}T10:50`, memberId: "M-1002", partySize: 2, guests: 0, sessionId: "S-down", clubRules, step: 1,
 });
 console.log(`  booking: ${down.status}`);
 if (down.status === "unavailable") console.log(`           reason: ${down.reason}`);
@@ -48,7 +50,7 @@ if (down.status === "unavailable") console.log(`           reason: ${down.reason
 //    host. Fail fast, and stop making someone else's outage worse.
 for (let i = 0; i < 5; i++) {
   await bookTeeTime({
-    slotId: `${tomorrow}T11:0${i}`, memberId: "M-1002", partySize: 1, guests: 0, sessionId: `S-x${i}`, step: 1,
+    slotId: `${tomorrow}T11:0${i}`, memberId: "M-1002", partySize: 1, guests: 0, sessionId: `S-x${i}`, clubRules, step: 1,
   }).catch(() => {});
 }
 const c = circuitState();

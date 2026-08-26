@@ -60,7 +60,8 @@ import {
   statedAsStanding,
   type Memory,
 } from "../memory/store.js";
-import { closedFor, closuresFrom, weekdayNamed, weekdayOf } from "./slots.js";
+import { checkBooking, reconcileLimit, rulesFrom } from "./rules.js";
+import { closedFor, weekdayNamed, weekdayOf } from "./slots.js";
 import { memberSentence, memoryOfferText } from "./render.js";
 import { ask, MODEL, type Answer } from "./answer.js";
 import { loadDocuments, loadStructured } from "./corpus.js";
@@ -71,7 +72,8 @@ const client = new Anthropic();
 // seven files per turn is work with no purchaser.
 const docs = loadDocuments();
 const structured = loadStructured();
-const closures = closuresFrom(structured);
+const rules = rulesFrom(structured);
+const closures = rules.closures;
 
 /**
  * WRITE POLICY: EXPLICIT ONLY.
@@ -624,7 +626,7 @@ const systemPrompt = (s: Session): string => {
   return `Today is ${fmt(today)}. In ISO form that is ${iso}.
 
 The club is in Sydney. When a member names a day without a year they mean the
-NEXT one — never a past date. Members can book up to six weeks ahead.
+NEXT one — never a past date. Members can book up to ${rules.maxDaysAhead} days ahead.
 
 You are the member services agent for a golf club.
 
@@ -708,10 +710,14 @@ export function dateProblem(isoDate: string, now = new Date()): string | undefin
   const today = now.toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" });
   if (isoDate < today) return `${isoDate} is in the past (today is ${today}).`;
   const [y, m, d] = isoDate.split("-").map(Number);
-  const limit = new Date(now.getTime() + 42 * 864e5).toLocaleDateString("en-CA", {
+  // FROM THE RULEBOOK, NOT A LITERAL. This was `42`, duplicating
+  // booking-rules.yaml's max_days_ahead — so changing the club's rule
+  // would have changed what the agent SAYS and not what it DOES.
+  const ahead = rules.maxDaysAhead;
+  const limit = new Date(now.getTime() + ahead * 864e5).toLocaleDateString("en-CA", {
     timeZone: "Australia/Sydney",
   });
-  if (isoDate > limit) return `${isoDate} is more than six weeks ahead (the limit is ${limit}).`;
+  if (isoDate > limit) return `${isoDate} is more than ${ahead} days ahead (the limit is ${limit}).`;
   void y; void m; void d;
   return undefined;
 }
@@ -1354,17 +1360,10 @@ async function execute(
     // path never learned. A corpus correction cannot reach a code path,
     // and the failure it was preventing — a member driving to a closed
     // tee sheet — was still live two days later.
-    const shut = closedFor(slotId, closures);
-    if (shut) {
-      return {
-        ok: false,
-        detail: `${shut.reason.toLowerCase()} — sheet closed ${shut.from}–${shut.to}`,
-        forModel:
-          `Refused: ${slotId} is inside the ${shut.reason} window (${shut.day} ` +
-          `${shut.from}–${shut.to}), when the tee sheet is closed to general booking. ` +
-          `Tell the member and offer a time outside it.`,
-      };
-    }
+    // The club's rules are enforced inside bookTeeTime, not here — a
+    // guard in this layer holds only for callers who go through it, and
+    // an audit script booking four guests against a two-guest rule
+    // proved that the hard way.
 
     // THE LEDGER CHECK. A prompt asking the model to only book slots it
     // was shown is a request; this is a guarantee. It stops both a
@@ -1385,6 +1384,7 @@ async function execute(
         partySize: party,
         guests: guestCount,
         sessionId: s.sessionId,
+        clubRules: rules,
         step: s.step,
       });
       // Alternatives are offers too — a member may take one next turn.
