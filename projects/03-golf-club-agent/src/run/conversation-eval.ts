@@ -102,6 +102,12 @@ async function runCase(c: ConversationCase): Promise<Result> {
     }
   }
 
+  for (const must of e.replyMustContain ?? []) {
+    if (!r.replies.some((x) => x.includes(must))) {
+      r.failures.push(`no reply contained "${must}" — said: ${r.replies.join(" | ").slice(0, 200)}`);
+    }
+  }
+
   // Near-misses on tools that CHANGE THE WORLD. A refused
   // remember_preference is the write policy working normally and would
   // drown the signal; a refused booking is the model having tried to
@@ -178,6 +184,8 @@ if (filter === "--list" || process.argv.includes("--list")) {
       console.log(`  \x1b[32m✓ memories after\x1b[0m ${e.memoriesAfter}`);
     for (const a of e.argsMustNotContain ?? [])
       console.log(`  \x1b[31m✗ never in any argument\x1b[0m "${a}"`);
+    for (const a of e.replyMustContain ?? [])
+      console.log(`  \x1b[32m✓ reply contains\x1b[0m "${a}" ${dim("(code-generated)")}`);
     if (e.replyShouldMention)
       console.log(`  ${dim(`· reported only: reply mentions one of ${e.replyShouldMention.join(", ")}`)}`);
   }
