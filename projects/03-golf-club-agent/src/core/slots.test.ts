@@ -72,3 +72,39 @@ test("words that merely resemble a weekday do not count", () => {
     assert.equal(weekdayNamed(t), undefined, `should not name a weekday: "${t}"`);
   }
 });
+
+// ═══ the collision that made the guard worse than nothing ═════════
+test("monday is monday, not sunday", () => {
+  // "monday" and "sunday" are two edits apart (m→s, o→u), and the
+  // first version accepted anything within two, walking the days in
+  // order — so every Monday request was refused as a Sunday, and the
+  // model invented a wrong date to escape. A guard that mangles
+  // correct input is worse than no guard.
+  assert.equal(weekdayNamed("ok and monday the same time?"), "monday");
+  assert.equal(weekdayNamed("can I play sunday?"), "sunday");
+});
+
+test("tuesday and thursday do not collide either", () => {
+  assert.equal(weekdayNamed("anything tuesday?"), "tuesday");
+  assert.equal(weekdayNamed("anything thursday?"), "thursday");
+});
+
+test("every weekday survives an exact match", () => {
+  for (const d of ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"]) {
+    assert.equal(weekdayNamed(`book me ${d} at 9`), d, `"${d}" must match itself`);
+  }
+});
+
+test("an ambiguous typo is not guessed at all", () => {
+  // "sonday" is one edit from both sunday and monday. Guessing is the
+  // collision above with better odds; leaving it undefined hands the
+  // question back to the model, which is where it started.
+  assert.equal(weekdayNamed("book me sonday at 9"), undefined);
+});
+
+test("an unambiguous typo is still corrected", () => {
+  // The whole reason the guard exists — "staturday" was resolved by the
+  // model to Sunday 30 August.
+  assert.equal(weekdayNamed("Can I book for staturday 9 am"), "saturday");
+  assert.equal(weekdayNamed("how about wednsday"), "wednesday");
+});

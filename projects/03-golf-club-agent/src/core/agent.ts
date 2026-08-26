@@ -56,6 +56,7 @@ import {
   excludedBy,
   isAffirmative,
   isNegative,
+  mentionedCompany,
   saidTheyArePlayingAlone,
   statedAsStanding,
   type Memory,
@@ -1325,6 +1326,32 @@ async function execute(
     // never from the arguments the model chose.
     let party = partySize;
     let guestCount = guests;
+
+    // GUESTS COST MONEY, SO THE MEMBER MUST HAVE MENTIONED SOMEBODY.
+    //
+    // Asked "how many in your party, and will you have any guests?" — a
+    // compound question — a member answered "yes" and was booked for
+    // two with one guest, a count nobody gave, at $20.
+    //
+    // The solo guard covers "just me". It did not cover SILENCE, which
+    // is the commoner case: most members never announce that they are
+    // playing alone. Refused rather than corrected, because unlike
+    // "just me" there is no right answer to substitute — only the
+    // member knows, and one clear question costs a turn where a wrong
+    // guess costs a fee and a guest turned away.
+    const saidSoFar = s.history
+      .filter((m) => m.role === "user" && typeof m.content === "string")
+      .map((m) => m.content as string);
+    if (guestCount > 0 && !mentionedCompany(saidSoFar)) {
+      return {
+        ok: false,
+        forModel:
+          `Refused: you asked for ${guestCount} guest(s) and the member has never mentioned ` +
+          `anyone playing with them. Guests are charged, so ask them plainly — "just you, or ` +
+          `are you bringing anyone?" — in ONE question, and book what they answer.`,
+      };
+    }
+
     if (saidTheyArePlayingAlone(lastMemberTurn(s)) && (party > 1 || guestCount > 0)) {
       // CORRECTED, NOT REFUSED.
       //

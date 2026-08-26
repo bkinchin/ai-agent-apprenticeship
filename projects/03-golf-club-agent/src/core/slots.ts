@@ -71,13 +71,34 @@ export function closedFor(slotId: string, closures: Closure[]): Closure | undefi
  * enumerate the ways a word can be mistyped.
  */
 export function weekdayNamed(turn: string): string | undefined {
-  for (const word of turn.toLowerCase().match(/[a-z]{4,}/g) ?? []) {
-    for (const day of DAYS) {
-      if (word === day) return day;
-      // Within two edits and a close length — "staturday", "saterday",
-      // "thurdsay". Not "sunday" against "someday".
-      if (Math.abs(word.length - day.length) <= 2 && distance(word, day) <= 2) return day;
-    }
+  const words = turn.toLowerCase().match(/[a-z]{4,}/g) ?? [];
+
+  // EXACT MATCHES WIN OUTRIGHT, ACROSS ALL WORDS, BEFORE ANY FUZZINESS.
+  //
+  // The first version walked the days in order for each word and
+  // accepted anything within two edits — so "monday" matched "sunday"
+  // (m→s, o→u) because sunday is checked first, and every Monday
+  // request was refused as a Sunday. "tuesday" and "thursday" collide
+  // the same way.
+  //
+  // A guard that mangles correct input is worse than no guard: it
+  // refused a date the member HAD given, and the model then invented a
+  // wrong one to escape.
+  for (const w of words) if ((DAYS as readonly string[]).includes(w)) return w;
+
+  // Then the closest day — but only if it is UNAMBIGUOUSLY closest.
+  //
+  // "sonday" is one edit from both sunday and monday. Guessing there is
+  // exactly the failure above with better odds, so it does not guess:
+  // an unrecognised weekday leaves the model to resolve it, which is
+  // where it started.
+  for (const w of words) {
+    const scored = DAYS.map((d) => ({ d, n: distance(w, d) })).sort((a, b) => a.n - b.n);
+    const [best, next] = scored;
+    if (!best || best.n > 2) continue;
+    if (Math.abs(w.length - best.d.length) > 2) continue;
+    if (next && next.n - best.n < 2) continue; // too close to call
+    return best.d;
   }
   return undefined;
 }

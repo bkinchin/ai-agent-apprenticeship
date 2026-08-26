@@ -113,6 +113,38 @@ export const CASES: ConversationCase[] = [
     },
   },
   {
+    id: "party-size/a-bare-yes-does-not-buy-a-guest",
+    why:
+      'Asked the compound question "how many in your party, and will you have any guests?", ' +
+      'a member answered "yes" and was booked for two with one guest — a count nobody gave, ' +
+      "at $20. The solo guard covers \"just me\"; it did not cover SILENCE, which is the " +
+      "commoner case because most members never announce that they are playing alone. Third " +
+      "time a bare affirmative has caused a defect, and the first time it costs money.",
+    memberId: "M-1001",
+    turns: ["can i book sunday at 12pm?", "yes"],
+    runs: 3,
+    expect: {
+      // NOT "must book". Asking is the right outcome when the member
+      // has not said — only they know, and one clear question costs a
+      // turn where a wrong guess costs a fee and a guest turned away at
+      // the first tee. What must never happen is a guest being BOOKED.
+      argsMustNotContain: ['"guests":1', '"guests":2', '"guests":3'],
+    },
+  },
+  {
+    id: "party-size/a-mentioned-guest-is-booked",
+    why:
+      "The counterweight. A member who says they are bringing someone must get them, with " +
+      "the fee stated — a guard that refuses every guest is not a safer agent, it is a " +
+      "broken one.",
+    memberId: "M-1001",
+    turns: ["can i book sunday at 12:30 for me and a mate?"],
+    expect: {
+      mustCall: [{ tool: "book_tee_time", args: { partySize: 2, guests: 1 } }],
+      replyMustContain: ["$20"],
+    },
+  },
+  {
     id: "slots/competition-window-is-not-bookable",
     why:
       "A member asked for Saturday 9am and was booked, straight into the club competition " +

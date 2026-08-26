@@ -422,3 +422,26 @@ const SOLO = /\b(just|only)\s+(me|myself)\b(?!\s*(and|&|\+|,\s*(and|plus)))/i;
 export function saidTheyArePlayingAlone(memberTurn: string): boolean {
   return SOLO.test(memberTurn);
 }
+
+/**
+ * Has the member said anything at all that implies company?
+ *
+ * Asked the compound question "how many in your party, and will you
+ * have any guests?", a member said "yes" and was booked for two with
+ * one guest — a count nobody gave, and $20 charged for it.
+ *
+ * That is the bare-affirmative ambiguity for the third time, and the
+ * first time it costs money. "Just me" was already guarded; SILENCE was
+ * not, and silence is the more common case: most members do not
+ * announce that they are playing alone.
+ *
+ * So guests require evidence in the member's own words. A member who
+ * genuinely has one says so, or gets asked one clear question — and a
+ * member who never mentioned anybody is never charged for them.
+ */
+const COMPANY =
+  /\b(guest|guests|friend|friends|mate|mates|lad|lads|partner|wife|husband|son|daughter|brother|father|dad|mum|mother|colleague|group|fourball|four ?ball|three ?ball|two ?ball|us|we|our)\b|\bplus\s*\d|\+\s*\d|\b(two|three|four|2|3|4)\s+(of us|players|people)\b/i;
+
+export function mentionedCompany(memberTurns: string[]): boolean {
+  return memberTurns.some((t) => COMPANY.test(t));
+}

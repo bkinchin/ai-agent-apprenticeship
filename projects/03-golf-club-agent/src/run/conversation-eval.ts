@@ -96,7 +96,13 @@ async function runCase(c: ConversationCase): Promise<Result> {
   }
 
   for (const bad of e.argsMustNotContain ?? []) {
-    const blob = JSON.stringify(r.calls).toLowerCase();
+    // EXECUTED calls only, consistent with mustCall. A refused attempt
+    // is the guard working, not the defect — asserting on attempts
+    // failed a case where a bad guest count was caught and the agent
+    // correctly asked the member instead. Second time this exact
+    // inconsistency has bitten; the rule is that assertions are about
+    // what HAPPENED.
+    const blob = JSON.stringify(r.calls.filter((x) => !x.refused)).toLowerCase();
     if (blob.includes(bad.toLowerCase())) {
       r.failures.push(`"${bad}" must not appear in any tool argument`);
     }

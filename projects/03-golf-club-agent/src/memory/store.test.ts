@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MemoryStore, isAffirmative, saidTheyArePlayingAlone, statedAsStanding, excludedBy } from "./store.js";
+import { MemoryStore, isAffirmative, mentionedCompany, saidTheyArePlayingAlone, statedAsStanding, excludedBy } from "./store.js";
 
 const NOW = new Date("2026-08-21T10:00:00Z");
 const src = (quote: string) => ({ sessionId: "S-1", turnIndex: 0, quote });
@@ -258,4 +258,32 @@ test("but not when they name company in the same breath", () => {
   ]) {
     assert.equal(saidTheyArePlayingAlone(t), false, `should NOT be solo: "${t}"`);
   }
+});
+
+// ═══ guests need evidence ═════════════════════════════════════════
+test("company is recognised when the member mentions it", () => {
+  for (const t of [
+    "me and two guests",
+    "I'm bringing a mate",
+    "playing with my wife",
+    "there'll be four of us",
+    "me plus 2",
+    "we'd like a fourball",
+  ]) {
+    assert.ok(mentionedCompany([t]), `should imply company: "${t}"`);
+  }
+});
+
+test("a bare yes is not evidence of a guest", () => {
+  // Asked "how many in your party, and will you have any guests?" a
+  // member said "yes" and was booked for two with one guest — a count
+  // nobody gave, at $20. The solo guard covers "just me"; this covers
+  // silence, which is the commoner case.
+  assert.equal(mentionedCompany(["can i book saturday at 12pm?", "yes"]), false);
+  assert.equal(mentionedCompany(["book me in for sunday", "9:20 please"]), false);
+});
+
+test("company anywhere in the conversation counts, not just this turn", () => {
+  // "I'm bringing a mate" three turns ago is still evidence.
+  assert.ok(mentionedCompany(["I'm bringing a mate", "saturday", "12pm"]));
 });
