@@ -1395,13 +1395,30 @@ async function execute(
       // model chooses not to mention. If the tee sheet offered it, the
       // member may name it.
       for (const sl of slots) s.offered.set(sl.slotId, { date: sl.date, time: sl.time });
+
+      // AT THE LIMIT ARMS THE FRUSTRATION TRIGGER.
+      //
+      // The warning below was added so a member is told they are at the
+      // limit BEFORE being offered times — and it silently removed the
+      // escalation, because the model then declined conversationally
+      // and never called book_tee_time, so nothing returned
+      // not_permitted.
+      //
+      // The trigger keyed on a MECHANISM (a tool refusing) rather than
+      // on the FACT (the member was told no). A better answer to the
+      // member removed a safety net, which is the kind of regression
+      // that only shows up when somebody is cross.
+      const atLimit = (s.bookings?.length ?? 0) >= rules.maxLivePerMember;
+      if (atLimit) {
+        s.refusedLastTurn = `they already hold ${s.bookings!.length} live bookings, which is the maximum`;
+      }
       return {
         // The WEEKDAY goes back too. If the member said Saturday and
         // this says Friday, the model can see the mismatch — it could
         // not before, because a bare ISO date carries no day name.
         forModel:
-          (s.bookings && s.bookings.length >= rules.maxLivePerMember
-            ? `STOP: they already hold ${s.bookings.length} live bookings, which is the ` +
+          (atLimit
+            ? `STOP: they already hold ${s.bookings!.length} live bookings, which is the ` +
               `maximum of ${rules.maxLivePerMember}. Do NOT offer any of these times — tell ` +
               `them they are at the limit and would need to cancel one first. `
             : "") +
@@ -1640,6 +1657,7 @@ async function execute(
           forModel: `The booking is gone and could not be restored. A person has been told.`,
         };
       }
+      if (outcome.status === "not_permitted") s.refusedLastTurn = outcome.reason;
       return {
         ok: outcome.status === "amended",
         detail: outcome.status === "amended" ? undefined : outcome.reason,

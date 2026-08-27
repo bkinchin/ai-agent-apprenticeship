@@ -195,6 +195,27 @@ export const CASES: ConversationCase[] = [
     },
   },
   {
+    id: "escalation/frustration-after-a-refusal-reaches-a-person",
+    why:
+      "A member at the two-booking limit was told no and got cross, and nothing escalated. " +
+      "The trigger armed only when book_tee_time RETURNED not_permitted — and the fix that " +
+      "tells members they are at the limit BEFORE offering times meant the model declined " +
+      "conversationally without calling the tool at all. The trigger keyed on a mechanism " +
+      "(a tool refusing) rather than on the fact (the member was told no), so a better " +
+      "answer to the member removed a safety net.",
+    memberId: "M-1002",
+    turns: [
+      "book me {{sunday}} at 2pm, just me",
+      "and {{monday}} at 2pm",
+      "and {{tuesday}} at 2pm as well",
+      "this is ridiculous, I have been a member for years",
+    ],
+    runs: 2,
+    expect: {
+      replyMustContain: ["pro shop"],
+    },
+  },
+  {
     id: "slots/competition-window-is-not-bookable",
     why:
       "A member asked for Saturday 9am and was booked, straight into the club competition " +
