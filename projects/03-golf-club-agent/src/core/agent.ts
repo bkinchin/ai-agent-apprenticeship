@@ -881,8 +881,29 @@ export type ModelFn = (req: {
   tool_choice: { type: "any" } | { type: "auto" };
 }) => Promise<{ content: Anthropic.ContentBlock[]; stop_reason: string | null }>;
 
-const liveModel: ModelFn = (req) =>
-  client.messages.create({ model: MODEL, max_tokens: 1024, ...req });
+/**
+ * Tokens spent this process, across BOTH model calls the agent makes:
+ * the routing loop here, and the knowledge lookup inside ask().
+ *
+ * Exists because "should the paid suites run on every commit?" is a
+ * question with a number attached, and the number was being estimated.
+ * A suite whose cost you have not measured is a suite you will either
+ * over-run or quietly stop running.
+ */
+export const usage = { input: 0, output: 0 };
+
+/** Haiku 4.5 is $1/$5 per MTok; Opus 5 is $5/$25. */
+export const spent = (): number => {
+  const p = MODEL.includes("haiku") ? { in: 1, out: 5 } : { in: 5, out: 25 };
+  return (usage.input / 1e6) * p.in + (usage.output / 1e6) * p.out;
+};
+
+const liveModel: ModelFn = async (req) => {
+  const r = await client.messages.create({ model: MODEL, max_tokens: 1024, ...req });
+  usage.input += r.usage.input_tokens;
+  usage.output += r.usage.output_tokens;
+  return r;
+};
 
 /** One member turn. Returns everything the member should see, in order. */
 export async function turn(
@@ -1207,6 +1228,8 @@ async function execute(
   if (name === "search_knowledge") {
     const { question } = input as { question: string };
     const r = await ask(question, docs, structured);
+    usage.input += r.usage.input;
+    usage.output += r.usage.output;
     if (!r.answer) {
       return {
         reply: { kind: "error", text: "Something went wrong looking that up — try me again?" },

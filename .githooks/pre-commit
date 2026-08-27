@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#
+# The free suites. Eight seconds, no API key, no network.
+#
+# WHY THIS EXISTS. Every suite in this repository ran because somebody
+# typed the command — and on day 12 a commit went in on a RED suite,
+# because the output was tailed too short and the failure was above the
+# fold. The suite worked; the person reading it did not.
+#
+# Only the free, fast checks run here. A hook that costs money or takes
+# a minute gets bypassed with --no-verify, and a bypassed hook is worse
+# than none: it is a guarantee everyone believes in and nobody has.
+#
+# The paid suites run on push. See .githooks/pre-push.
+
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+# Own port, so a tee sheet you left running while testing does not
+# collide with the one reliability.ts spawns.
+export TEE_SHEET_PORT=4019
+export TEE_SHEET_URL=http://localhost:4019
+
+fail=0
+
+# RETURNS A STATUS. It does not set a variable.
+#
+# The first version ran each check inside a subshell — ( cd "$p" && run
+# ... ) — and set fail=1 in there, where the parent could never see it.
+# The hook printed the failure in red and exited 0, letting the red
+# commit through: the exact thing it was written to prevent, on its
+# first control test.
+#
+# Shell subshells are a scope boundary, and a hook nobody has watched
+# FAIL is a hook nobody should trust.
+run () {
+  local dir="$1" label="$2"; shift 2
+  local out
+  if out=$(cd "$dir" && "$@" 2>&1); then
+    printf "  \033[32m✔\033[0m %s\n" "$label"
+    return 0
+  fi
+  printf "  \033[31m✖ %s\033[0m\n" "$label"
+  # The last 20 lines, because burying the failure is how the red
+  # commit happened in the first place.
+  echo "$out" | tail -20 | sed 's/^/      /'
+  return 1
+}
+
+echo
+for p in projects/01-hello-agent projects/03-golf-club-agent; do
+  [ -f "$p/package.json" ] || continue
+  echo "  $(basename "$p")"
+  run "$p" "typecheck"  npx tsc --noEmit || fail=1
+  run "$p" "unit tests" npm test --silent || fail=1
+done
+
+run projects/03-golf-club-agent "reliability" npm run reliability --silent || fail=1
+
+if [ "$fail" -ne 0 ]; then
+  printf "\n  \033[31mcommit blocked.\033[0m  --no-verify overrides, and you should have a reason.\n\n"
+  exit 1
+fi
+printf "\n"
+exit 0

@@ -128,3 +128,27 @@ The programme is complete when you can satisfy [SUCCESS_CRITERIA.md](SUCCESS_CRI
 ## Specification
 
 The original brief for this repository is preserved at [REPOSITORY_SPEC.md](REPOSITORY_SPEC.md).
+
+---
+
+## Running the checks
+
+Hooks live in `.githooks/` and are version-controlled. After cloning:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+| When | What | Time | Cost |
+|---|---|---|---|
+| **pre-commit** | typecheck, unit tests, reliability — both projects | ~8s | free |
+| **pre-push** | + the conversational golden set | ~90s | **$0.24** |
+| manual | knowledge eval · project 01 golden set | ~3min | ~$0.51 |
+
+```bash
+cd projects/03-golf-club-agent && npm run conversations   # $0.24
+cd projects/03-golf-club-agent && npm run knowledge       # $0.23
+cd projects/01-hello-agent     && npm run eval            # ~$0.28
+```
+
+The split is deliberate. **A hook that costs money or takes a minute gets bypassed with `--no-verify`, and a bypassed hook is worse than none** — a guarantee everyone believes in and nobody has. Commits are constant and pushes are rare, so the paid suite runs at the point where work becomes public.

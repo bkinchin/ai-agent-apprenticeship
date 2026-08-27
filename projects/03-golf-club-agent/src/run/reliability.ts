@@ -12,12 +12,22 @@ import { z } from "zod";
 import { rulesFrom } from "../core/rules.js";
 import { loadStructured } from "../core/corpus.js";
 import { amendBooking, bookTeeTime, cancelBooking, checkAvailability } from "../tools/tee-sheet.js";
-import { resetCircuit } from "../tools/client.js";
+import { BASE, resetCircuit } from "../tools/client.js";
 import { clearAll, forget, pending } from "../tools/idempotency.js";
 import { confirmBooking, holdSlot } from "../tools/tee-sheet.js";
 import { unlinkSync, existsSync } from "node:fs";
 
-const BASE = "http://localhost:4010";
+// FROM THE SAME PLACE THE TOOLS GET IT.
+//
+// This was hardcoded to :4010 while the tools read TEE_SHEET_URL — two
+// sources of truth for one address. On a spare port the control
+// endpoints went to 4010 and the tools went elsewhere; with a server
+// already on 4010 the suite's own spawned server failed to bind, died
+// silently, and every check ran against a stranger's server with
+// whatever state and hostility settings it happened to have.
+//
+// A suite that silently adopts somebody else's server can pass for
+// reasons that have nothing to do with the code.
 const IDEM = ".idempotency.json";
 
 const api = async (path: string, init?: RequestInit) =>
@@ -48,6 +58,17 @@ const check = (label: string, ok: boolean, detail = "") => {
 // ── start a server ──────────────────────────────────────────────
 const server = spawn("npx", ["tsx", "tee-sheet/server.ts"], { stdio: "ignore" });
 await new Promise((r) => setTimeout(r, 3000));
+
+// FAIL LOUDLY IF IT DID NOT COME UP. The spawn used to fail in silence
+// when the port was taken, and the suite carried on against whatever
+// was listening.
+const alive = await fetch(`${BASE}/_state`).then((r) => r.ok).catch(() => false);
+if (!alive) {
+  console.error(`\n  the tee sheet is not answering on ${BASE}.`);
+  console.error(`  something else may be using the port — try TEE_SHEET_PORT=4011 TEE_SHEET_URL=http://localhost:4011\n`);
+  server.kill();
+  process.exit(2);
+}
 
 try {
   // ═══ 1. IDEMPOTENCY ═══════════════════════════════════════════

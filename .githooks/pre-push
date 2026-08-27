@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#
+# The paid suites. ~$0.24 and about ninety seconds.
+#
+# On PUSH rather than commit because pushing is rare and commits are
+# not — there were twenty-four unpushed commits on the day this was
+# written. Push is also when work becomes public, which is the moment
+# worth spending money to be sure about.
+#
+# Runs the conversational golden set only. The knowledge eval ($0.23)
+# and project 01's golden set (~$0.28) cover areas that change rarely;
+# run those by hand when you touch them:
+#
+#   cd projects/03-golf-club-agent && npm run knowledge
+#   cd projects/01-hello-agent     && npm run eval
+
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ ! -f .env.local ]; then
+  echo "  no API key — skipping the conversational suite."
+  exit 0
+fi
+
+export TEE_SHEET_PORT=4019
+export TEE_SHEET_URL=http://localhost:4019
+
+echo
+echo "  conversational golden set (~\$0.24, ~90s) — ctrl-c to skip"
+cd projects/03-golf-club-agent
+rm -f .memory.db .queue.db .idempotency.json
+
+if npm run conversations --silent; then
+  printf "\n"
+  exit 0
+fi
+printf "\n  \033[31mpush blocked.\033[0m  --no-verify overrides.\n\n"
+exit 1

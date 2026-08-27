@@ -19,7 +19,7 @@
 
 import { z } from "zod";
 
-const BASE = process.env.TEE_SHEET_URL ?? "http://localhost:4010";
+export const BASE = process.env.TEE_SHEET_URL ?? "http://localhost:4010";
 const TIMEOUT_MS = 4000;
 const MAX_ATTEMPTS = 3;
 

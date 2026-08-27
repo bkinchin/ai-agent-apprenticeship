@@ -19,7 +19,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { CASES, type ConversationCase } from "../eval/conversations.js";
-import { memory, newSession, turn, type Reply } from "../core/agent.js";
+import { memory, newSession, spent, turn, usage, type Reply } from "../core/agent.js";
 import { MODEL } from "../core/answer.js";
 import { contactsFrom, guestFeeFrom, memberText } from "../core/render.js";
 import { loadStructured } from "../core/corpus.js";
@@ -245,6 +245,10 @@ const errored = results.filter((r) => r.errored);
 const passed = results.length - failed.length - errored.length;
 
 console.log(`\n${"═".repeat(70)}`);
+console.log(
+  `cost     $${spent().toFixed(4)}  ` +
+    dim(`(${usage.input.toLocaleString()} in / ${usage.output.toLocaleString()} out, ${MODEL})`),
+);
 console.log(`passed   ${passed}/${cases.length}`);
 console.log(`failed   ${failed.length}`);
 console.log(`errored  ${errored.length}   ${errored.length ? "← NOT a pass and NOT a fail" : ""}`);
