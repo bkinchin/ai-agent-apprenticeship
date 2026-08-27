@@ -8,7 +8,7 @@
 // Accuracy on answerable questions tells you the retrieval works.
 // Invention rate tells you whether you can trust any of it.
 
-import { ask, MODEL } from "../core/answer.js";
+import { ask, leakySuggestion, MODEL } from "../core/answer.js";
 import { loadDocuments, loadStructured } from "../core/corpus.js";
 import { QUESTIONS } from "../eval/questions.js";
 
@@ -112,7 +112,7 @@ for (const q of cases) {
   // An abstention whose "routing" carries a figure is a fact that
   // escaped the citation requirement through the branch meant to be safe.
   const leaky =
-    r.answer?.status === "not_in_knowledge_base" && /\d/.test(r.answer.suggestion);
+    r.answer?.status === "not_in_knowledge_base" && leakySuggestion(r.answer.suggestion);
   if (leaky) leakySuggestions++;
 
   results.push({ id: q.id, outcome, detail, bad: r.badCitations.length });

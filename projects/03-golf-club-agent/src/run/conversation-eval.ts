@@ -45,18 +45,95 @@ interface Result {
 const matches = (got: Record<string, unknown>, want: Record<string, unknown>) =>
   Object.entries(want).every(([k, v]) => got[k] === v);
 
+/**
+ * A tee time that is genuinely inside the 24-hour window, computed now.
+ *
+ * FIXTURES THAT HARDCODE A DATE ROT. This case said "tomorrow the
+ * 27th"; two days later it was asking to book yesterday, and the suite
+ * failed for a reason that had nothing to do with the agent —
+ * "a test whose result depends on the day it runs is a test that will
+ * one day fail for a reason nobody can reproduce", which is written in
+ * dates.test.ts by the person who then hardcoded these.
+ *
+ * Returns undefined when there is no such slot — running at 9pm, every
+ * remaining tee time today has gone. That SKIPS the case rather than
+ * failing it, because a case that cannot run is an unknown and day 7's
+ * rule holds: a system that cannot tell "wrong" from "unknown" will
+ * eventually report one as the other.
+ */
+function slotInside24h(now = new Date()): { date: string; time: string } | undefined {
+  const soon = new Date(now.getTime() + 3 * 3600e3);
+  const date = soon.toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" });
+  const hh = Number(soon.toLocaleTimeString("en-GB", { timeZone: "Australia/Sydney", hour: "2-digit", hour12: false }));
+  // The tee sheet runs 07:00–17:30, and the club needs an hour's notice.
+  if (hh < 7 || hh > 17) return undefined;
+  return { date, time: `${String(hh).padStart(2, "0")}:00` };
+}
+
+/**
+ * The next occurrence of a weekday, as the club would say it.
+ *
+ * Fixtures named absolute dates — "saturday the 29th" — which pass this
+ * week and fail next week for a reason that has nothing to do with the
+ * agent. A golden set with a shelf life is a golden set that gets
+ * deleted the first time somebody is in a hurry.
+ */
+function nextWeekday(name: string, now = new Date()): string {
+  const days = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+  const want = days.indexOf(name.toLowerCase());
+  const iso = now.toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" });
+  const [y, m, d] = iso.split("-").map(Number);
+  const base = new Date(Date.UTC(y!, m! - 1, d!));
+  let add = (want - base.getUTCDay() + 7) % 7;
+  if (add === 0) add = 7; // "saturday" on a Saturday means the NEXT one
+  const then = new Date(base.getTime() + add * 864e5);
+  const day = then.getUTCDate();
+  const suffix = day % 10 === 1 && day !== 11 ? "st" : day % 10 === 2 && day !== 12 ? "nd" : day % 10 === 3 && day !== 13 ? "rd" : "th";
+  return `${name} the ${day}${suffix}`;
+}
+
+/** The ISO date of the next such weekday, for assertions. */
+function nextWeekdayISO(name: string, now = new Date()): string {
+  const days = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+  const want = days.indexOf(name.toLowerCase());
+  const iso = now.toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" });
+  const [y, m, d] = iso.split("-").map(Number);
+  const base = new Date(Date.UTC(y!, m! - 1, d!));
+  let add = (want - base.getUTCDay() + 7) % 7;
+  if (add === 0) add = 7;
+  return new Date(base.getTime() + add * 864e5).toISOString().slice(0, 10);
+}
+
+/** Substitute every relative token in a fixture string. */
+function resolve(text: string, soon: { date: string; time: string } | undefined): string {
+  return text
+    .replace(/\{\{soonDate\}\}/g, soon?.date ?? "")
+    .replace(/\{\{soonTime\}\}/g, soon?.time ?? "")
+    .replace(/\{\{(saturday|sunday|monday|tuesday|wednesday|thursday|friday)\}\}/gi, (_, d) => nextWeekday(d))
+    .replace(/\{\{iso:(saturday|sunday|monday|tuesday|wednesday|thursday|friday)\}\}/gi, (_, d) => nextWeekdayISO(d));
+}
+
 async function runCase(c: ConversationCase): Promise<Result> {
   const r: Result = { id: c.id, why: c.why, failures: [], reports: [], calls: [], replies: [] };
+  const soon = slotInside24h();
 
   // Each case starts from nothing. A case that passes only because a
   // previous one left state behind is not a case.
+  if (c.turns.some((t) => t.includes("{{soon")) && !slotInside24h()) {
+    // Not a pass. Not a fail. An unknown, said out loud.
+    r.errored = "no tee slot inside the 24-hour window at this hour — run it during the day";
+    return r;
+  }
+
   memory.forgetAll(c.memberId);
   if (existsSync(IDEM)) unlinkSync(IDEM);
   await fetch("http://localhost:4010/_reset", { method: "POST" }).catch(() => {});
 
   const s = newSession(c.memberId);
   try {
-    for (const t of c.turns) {
+    for (const raw of c.turns) {
+      // Fixtures name times relatively; the runner resolves them now.
+      const t = resolve(raw, soon);
       for (const reply of await turn(s, t)) collect(reply, r);
     }
   } catch (e) {
@@ -64,7 +141,9 @@ async function runCase(c: ConversationCase): Promise<Result> {
     return r;
   }
 
-  const e = c.expect;
+  // Assertions carry the same tokens, so a case can say
+  // {{iso:saturday}} and still assert on the exact slot it booked.
+  const e = JSON.parse(resolve(JSON.stringify(c.expect), soon)) as typeof c.expect;
 
   for (const want of e.mustCall ?? []) {
     const hit = r.calls.find(
@@ -186,7 +265,9 @@ if (filter === "--list" || process.argv.includes("--list")) {
     console.log(`\n\x1b[1m${c.id}\x1b[0m${c.runs ? dim(`  ×${c.runs}`) : ""}`);
     console.log(dim(`  ${wrap(c.why, "  ")}`));
     console.log(`  \x1b[36mmember\x1b[0m ${c.memberId}`);
-    for (const t of c.turns) console.log(`  \x1b[36m›\x1b[0m ${t}`);
+    // Tokens resolved for display, so --list shows what will actually
+    // be said rather than the template.
+    for (const t of c.turns) console.log(`  \x1b[36m›\x1b[0m ${resolve(t, slotInside24h())}`);
     const e = c.expect;
     for (const m of e.mustCall ?? [])
       console.log(`  \x1b[32m✓ must call\x1b[0m ${m.tool}${m.args ? `(${JSON.stringify(m.args)})` : ""}`);

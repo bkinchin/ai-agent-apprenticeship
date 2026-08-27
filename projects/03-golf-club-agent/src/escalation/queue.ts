@@ -53,7 +53,11 @@ export class Queue {
         team TEXT NOT NULL,
         missing TEXT NOT NULL,
         payload TEXT NOT NULL,
-        resolution TEXT
+        resolution TEXT,
+        -- REVERSE HANDOFF. Set once the agent has told the member their
+        -- escalation was dealt with, so it says it once rather than
+        -- opening every future conversation with old news.
+        toldMember TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_open ON escalations(resolution, urgency);
     `);
@@ -123,6 +127,38 @@ export class Queue {
          GROUP BY missing ORDER BY count DESC`,
       )
       .all() as { missing: string; count: number; triggers: string }[];
+  }
+
+  /**
+   * Escalations a human has resolved that the member has not been told
+   * about by the agent yet.
+   *
+   * THE HANDOFF HAS TO COME BACK. Otherwise the member rings, gets
+   * sorted out by the pro shop, returns to the agent that escalated
+   * them, and starts from nothing — which is worse than if the agent
+   * had never been involved, because it added a round trip to a
+   * conversation that still had to happen.
+   */
+  awaitingMention(memberId: string): Row[] {
+    const rows = this.db
+      .prepare(
+        `SELECT payload, resolution FROM escalations
+         WHERE memberId = ? AND resolution IS NOT NULL AND toldMember IS NULL
+         ORDER BY raisedAt ASC`,
+      )
+      .all(memberId) as { payload: string; resolution: string }[];
+    return rows.map((r) => {
+      const h = JSON.parse(r.payload) as Row;
+      h.resolution = JSON.parse(r.resolution) as Resolution;
+      return h;
+    });
+  }
+
+  /** Said once. Not every conversation from now on. */
+  markTold(ref: string): void {
+    this.db
+      .prepare(`UPDATE escalations SET toldMember = ? WHERE ref = ?`)
+      .run(new Date().toISOString(), ref);
   }
 
   close(): void {
@@ -227,6 +263,38 @@ export class Actions {
       .prepare(`UPDATE actions SET decision = ? WHERE ref = ? AND decision IS NULL`)
       .run(JSON.stringify(d), ref);
     return Number(r.changes) > 0;
+  }
+
+  /**
+   * Escalations a human has resolved that the member has not been told
+   * about by the agent yet.
+   *
+   * THE HANDOFF HAS TO COME BACK. Otherwise the member rings, gets
+   * sorted out by the pro shop, returns to the agent that escalated
+   * them, and starts from nothing — which is worse than if the agent
+   * had never been involved, because it added a round trip to a
+   * conversation that still had to happen.
+   */
+  awaitingMention(memberId: string): Row[] {
+    const rows = this.db
+      .prepare(
+        `SELECT payload, resolution FROM escalations
+         WHERE memberId = ? AND resolution IS NOT NULL AND toldMember IS NULL
+         ORDER BY raisedAt ASC`,
+      )
+      .all(memberId) as { payload: string; resolution: string }[];
+    return rows.map((r) => {
+      const h = JSON.parse(r.payload) as Row;
+      h.resolution = JSON.parse(r.resolution) as Resolution;
+      return h;
+    });
+  }
+
+  /** Said once. Not every conversation from now on. */
+  markTold(ref: string): void {
+    this.db
+      .prepare(`UPDATE escalations SET toldMember = ? WHERE ref = ?`)
+      .run(new Date().toISOString(), ref);
   }
 
   close(): void {

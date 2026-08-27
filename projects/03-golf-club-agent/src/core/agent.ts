@@ -205,6 +205,11 @@ export interface Session {
    * than to memory.
    */
   bookings?: { id: string; slotId: string; guests: number }[];
+  /**
+   * Escalations a human resolved that this member has not been told
+   * about yet. Loaded once per session and mentioned once.
+   */
+  resolved?: { ref: string; summary: string; whatIDid: string; by: string }[];
   /** Consecutive turns where the corpus could not answer. */
   fruitless: number;
   pendingMemory?: { key: string; value: string; quote: string; turn: string };
@@ -687,8 +692,31 @@ not restate what you think it said. Call the tool; the turn ends there.
 If a question is not about the club at all, say so briefly.
 
 Be warm and short. Members are usually on a phone.
-${recalled(s)}${held(s)}`;
+${recalled(s)}${held(s)}${handedBack(s)}`;
 };
+
+/**
+ * What a human did after the agent handed this member over.
+ *
+ * Mentioned FIRST and briefly — a member who has just spoken to the pro
+ * shop wants to know the agent knows, not to be told the whole story
+ * back. And it is the agent's job to raise it: making them ask "did you
+ * get my message?" is the failure this exists to prevent.
+ */
+function handedBack(s: Session): string {
+  if (!s.resolved?.length) return "";
+  const lines = s.resolved.map(
+    (r) => `- ${r.summary} — ${r.by} dealt with it: ${r.whatIDid} (ref ${r.ref})`,
+  );
+  // FOR CONTEXT ONLY. The member has already been told, in code, at the
+  // top of this turn — so this is here to stop the model repeating it
+  // or contradicting it, not to ask it to deliver the news.
+  return (
+    `\n\nA member of staff has just resolved something you escalated, and THE MEMBER HAS ` +
+    `ALREADY BEEN TOLD at the start of this reply. Do not repeat it. Carry on with what ` +
+    `they actually asked for:\n${lines.join("\n")}`
+  );
+}
 
 /**
  * The member's current bookings, as fact rather than memory.
@@ -953,6 +981,26 @@ export async function turn(
   }
   s.refusedLastTurn = undefined;
 
+  // REVERSE HANDOFF, loaded once per session.
+  //
+  // The pro shop rings the member, sorts it out, and the member comes
+  // back to the agent that escalated them. Without this it starts from
+  // nothing and they explain it all again — which is worse than if the
+  // agent had never been involved, because it added a round trip to a
+  // conversation that still had to happen.
+  if (s.resolved === undefined) {
+    s.resolved = queue.awaitingMention(s.memberId).map((h) => ({
+      ref: h.ref,
+      summary: h.summary,
+      whatIDid: h.resolution!.whatIDid,
+      by: h.resolution!.resolvedBy,
+    }));
+    // Said once. Marked before the turn runs, so a crash mid-turn does
+    // not produce an agent that opens every future conversation with
+    // the same old news.
+    for (const r of s.resolved) queue.markTold(r.ref);
+  }
+
   // Loaded once per session, refreshed after any write. A failure here
   // is not fatal — the model falls back to list_my_bookings.
   if (s.bookings === undefined) {
@@ -1025,6 +1073,30 @@ export async function turn(
   }
 
   const out: Reply[] = [];
+
+  // THE HANDOFF COMES BACK IN CODE, AND LEADS.
+  //
+  // The first version asked the MODEL to mention it in the prompt. It
+  // never did — the member's first question went to search_knowledge,
+  // which is terminal, so the turn ended and the model never spoke at
+  // all. Asking a model to say something in a turn where it may not get
+  // a word in is not a mechanism.
+  //
+  // It leads rather than trailing as an aside, because a member who has
+  // just spoken to the pro shop wants to know the agent knows before
+  // anything else happens.
+  if (s.resolved?.length) {
+    const said = s.resolved;
+    s.resolved = [];
+    for (const r of said) {
+      out.push({
+        kind: "text",
+        text:
+          `Before anything else — ${r.by} at the club looked at ${r.ref} and got back to ` +
+          `you: ${r.whatIDid}`,
+      });
+    }
+  }
 
   for (let i = 0; i < MAX_STEPS; i++) {
     const response = await model({

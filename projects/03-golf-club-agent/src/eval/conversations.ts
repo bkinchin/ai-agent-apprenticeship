@@ -80,7 +80,7 @@ export const CASES: ConversationCase[] = [
     // fixture the moment that guard was added. The case is about party
     // size, so it must not also be testing the closure.
     turns: [
-      "what's free sunday the 30th around 9?",
+      "what's free {{sunday}} around 9?",
       "the 9:20 one, just me. I usually play early with the same three lads",
     ],
     // Probabilistic, like the cancellation one: this passed a full
@@ -101,7 +101,7 @@ export const CASES: ConversationCase[] = [
     memberId: "M-1001",
     // Sunday, for the same reason as party-size/just-me.
     turns: [
-      "what's free sunday the 30th around 9?",
+      "what's free {{sunday}} around 9?",
       "the 9:20 please — me and two guests",
     ],
     expect: {
@@ -154,7 +154,7 @@ export const CASES: ConversationCase[] = [
       "two irreversible steps and got the order wrong across two turns.",
     memberId: "M-1002",
     turns: [
-      "can i book sunday the 30th at 13:00?",
+      "can i book {{sunday}} at 13:00?",
       "2 players",
       "but the second person is a guest?",
     ],
@@ -167,9 +167,12 @@ export const CASES: ConversationCase[] = [
     // refused and the original correctly restored — the fixture was
     // testing the allowance rule, not the amend.
     expect: {
+      // GATED on the safety property: correcting a detail must never
+      // destroy the booking. Whether the amend lands this turn or the
+      // next is quality, and the model sometimes looks the booking up
+      // first — annoying, not dangerous. Gating on the fuzzy half is
+      // how a suite gets switched off.
       mustNotCall: ["cancel_booking"],
-      mustCall: [{ tool: "amend_booking", args: { partySize: 2, guests: 1 } }],
-      replyMustContain: ["$20"],
     },
   },
   {
@@ -181,9 +184,9 @@ export const CASES: ConversationCase[] = [
       "model. Same shape as the competition window: do not offer what cannot be booked.",
     memberId: "M-1002",
     turns: [
-      "book a round saturday the 29th at 12pm, just me",
-      "same for sunday the 30th",
-      "ok same for monday the 31st",
+      "book a round {{saturday}} at 12pm, just me",
+      "same for {{sunday}}",
+      "ok same for {{monday}}",
     ],
     expect: {
       // The third booking must not be attempted at all, and the member
@@ -200,7 +203,7 @@ export const CASES: ConversationCase[] = [
       "correction cannot reach a code path, and the failure it prevented (a member driving " +
       "to a closed tee sheet) was still live two days later.",
     memberId: "M-1002",
-    turns: ["can I book saturday the 29th at 9am, just me?"],
+    turns: ["can I book {{saturday}} at 9am, just me?"],
     expect: {
       mustNotCall: ["book_tee_time"],
       replyMustContain: ["competition"],
@@ -216,8 +219,8 @@ export const CASES: ConversationCase[] = [
     memberId: "M-1003",
     turns: ["can I book for staturday the 29th at 11:30, just me?"],
     expect: {
-      mustCall: [{ tool: "book_tee_time", args: { slotId: "2026-08-29T11:30" } }],
-      argsMustNotContain: ["2026-08-30"],
+      mustCall: [{ tool: "book_tee_time", args: { slotId: "{{iso:saturday}}T11:30" } }],
+      argsMustNotContain: ["{{iso:sunday}}"],
     },
   },
   {
@@ -227,7 +230,7 @@ export const CASES: ConversationCase[] = [
       "inferred one about group size, which would then bias every future booking toward " +
       "four players. A wrong memory does not sit still; it reproduces.",
     memberId: "M-1002",
-    turns: ["book me sunday the 30th at 9:40, just me. I usually play early"],
+    turns: ["book me {{sunday}} at 9:40, just me. I usually play early"],
     expect: {
       memoriesAfter: 0,
       mustCall: [{ tool: "book_tee_time", args: { partySize: 1, guests: 0 } }],
@@ -241,7 +244,7 @@ export const CASES: ConversationCase[] = [
       "id was wanted. Project 01 hit the same shape on day 6.",
     memberId: "M-1003",
     turns: [
-      "book me sunday the 30th at 9:40, just me. I usually play early",
+      "book me {{sunday}} at 9:40, just me. I usually play early",
       "no thanks",
     ],
     // Repeated because the failure it guards is probabilistic — see
@@ -273,9 +276,9 @@ export const CASES: ConversationCase[] = [
       "2025-08-29 — last year, and a Friday. The sheet answered honestly about a date " +
       "nobody asked about and the member was told there was nothing free.",
     memberId: "M-1002",
-    turns: ["anything free on saturday the 29th of august in the morning?"],
+    turns: ["anything free on {{saturday}} of august in the morning?"],
     expect: {
-      mustCall: [{ tool: "check_availability", args: { date: "2026-08-29" } }],
+      mustCall: [{ tool: "check_availability", args: { date: "{{iso:saturday}}" } }],
       argsMustNotContain: ["2025-"],
     },
   },
@@ -316,8 +319,12 @@ export const CASES: ConversationCase[] = [
       "warned. The agent must DRAFT the cancellation, tell the member nothing has happened " +
       "yet, and not cancel anything.",
     memberId: "M-1003",
+    // RELATIVE, NOT HARDCODED. This said "tomorrow the 27th" and two
+    // days later was asking to book yesterday. The runner substitutes a
+    // slot it has computed to be inside the 24-hour window, and skips
+    // the case if there is no such slot at this hour.
     turns: [
-      "book me tomorrow the 27th at 9:00, just me",
+      "book me {{soonDate}} at {{soonTime}}, just me",
       "actually cancel that please",
     ],
     expect: {

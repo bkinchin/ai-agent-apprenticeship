@@ -263,7 +263,20 @@ export function verifyCitations(
       // reported as invented. This is the day-9 JSON.stringify bug for
       // the third time: the failure is never the matcher, it is the two
       // sides being prepared differently.
-      const missing = values.filter((v) => !structuredText.includes(flat(v)));
+      // STRIP THE QUOTE MARKS BEFORE MATCHING.
+      //
+      // A quoted token carries its own delimiters, and the YAML folded
+      // blocks end with a newline — so the stored value reads
+      // "...out of date.\n" while the model's citation reads
+      // "...out of date." and the closing quote never lines up. A true
+      // citation of the fee history was reported as invented.
+      //
+      // Fourth false positive in this detector, and the same cause
+      // every time: the needle and the haystack prepared differently.
+      // A detector that reports failures it cannot substantiate is
+      // worse than no detector.
+      const bare = (v: string) => flat(v.replace(/^"|"$/g, ""));
+      const missing = values.filter((v) => !structuredText.includes(bare(v)));
       if (values.length === 0) {
         bad.push({ ...c, why: "cited structured data but quoted no value" });
       } else if (missing.length > 0) {
@@ -308,4 +321,31 @@ export async function ask(
       output: response.usage.output_tokens,
     },
   };
+}
+
+
+/**
+ * Did an abstention smuggle a FACT into its routing field?
+ *
+ * Day 9 built this because the abstention branch was an uncited escape
+ * hatch: citations are required on answers and nothing was required on
+ * `suggestion`, so a decline could still deliver unsourced facts
+ * through the path designed to be the safe one.
+ *
+ * It tested for any digit, which was right when written — a suggestion
+ * had no honest reason to contain one. Then day 12 added contacts.yaml,
+ * and "ring the pro shop on 02 9411 0388" is now both routing AND full
+ * of digits. A guard tuned to the corpus becomes wrong when the corpus
+ * changes, and the failure is quiet: it reports a leak that is not
+ * there, which is how a detector gets ignored.
+ *
+ * Phone numbers and reference codes are routing. Fees, limits, times
+ * and dates are facts, and facts need a citation.
+ */
+export function leakySuggestion(suggestion: string): boolean {
+  const withoutRouting = suggestion
+    .replace(/\b0\d[\d\s-]{7,}\b/g, " ")       // 02 9411 0388
+    .replace(/\b(ESC|ACT|B)-[A-Za-z0-9-]+/g, " ") // our own references
+    .replace(/\b[\w.-]+@[\w.-]+\b/g, " ");      // email addresses
+  return /\d/.test(withoutRouting);
 }

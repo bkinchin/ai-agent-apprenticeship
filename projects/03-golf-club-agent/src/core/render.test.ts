@@ -12,6 +12,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { memberText, memoryOfferText, type Contact } from "./render.js";
+import { leakySuggestion } from "./answer.js";
 import type { Reply } from "./agent.js";
 
 const contacts: Record<string, Contact> = {
@@ -235,4 +236,49 @@ test("the offer survives a quote that arrives already quoted", () => {
     memoryOfferText("I usually play early"),
     "no doubled quote marks",
   );
+});
+
+// ═══ reverse handoff ══════════════════════════════════════════════
+test("a resolved escalation is mentioned by CODE, not left to the model", () => {
+  // The first version asked the model to mention it in the prompt. It
+  // never did — the member's question went to search_knowledge, which
+  // is terminal, so the turn ended and the model never spoke. Asking a
+  // model to say something in a turn where it may not get a word in is
+  // not a mechanism.
+  const t = show({
+    kind: "text",
+    text: "Before anything else — Billy at the club looked at ESC-1 and got back to you: made an exception.",
+  });
+  assert.match(t, /Billy/);
+  assert.match(t, /ESC-1/);
+  assert.match(t, /made an exception/);
+});
+
+// ═══ the abstention branch's figure guard ═════════════════════════
+test("routing details are not a leak", () => {
+  // Day 9's guard tested for ANY digit, which was right when a
+  // suggestion had no honest reason to contain one. Day 12 added
+  // contacts.yaml, and "ring them on 02 9411 0388" is now both routing
+  // and full of digits.
+  for (const s of [
+    "Ask the Pro Shop on 02 9411 0388.",
+    "Email proshop@example-golf.com.au.",
+    "Quote reference ESC-20260826-A1B2 when you call.",
+    "Speak to the Club Secretary.",
+  ]) {
+    assert.equal(leakySuggestion(s), false, `should NOT be a leak: "${s}"`);
+  }
+});
+
+test("a fact smuggled into routing IS a leak", () => {
+  // The thing the guard exists for: a fee, a limit, a time or a date
+  // delivered through the branch designed to be the safe one, with no
+  // citation behind it.
+  for (const s of [
+    "Ask the pro shop — the guest fee is $20.",
+    "You can book 6 weeks ahead; ask them to confirm.",
+    "The bar closes at 23:00, but check with them.",
+  ]) {
+    assert.ok(leakySuggestion(s), `should be a leak: "${s}"`);
+  }
 });
