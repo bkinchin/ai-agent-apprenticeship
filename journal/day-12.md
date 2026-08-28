@@ -183,6 +183,12 @@ The honest answer is that returning with the same issue means **the first escala
 
 ---
 
+## Watch items
+
+**A fifth path that has not occurred.** `refusedLastTurn` is armed by code on four paths — a tool refusal, the at-limit warning, a club-rule violation, a refused amend. `tool_choice` forces a tool on the first inference, so the model must call *something*, but if it called `end_turn` and explained the limit from the prompt alone, nothing would arm and a cross member would get no escalation.
+
+Not seen in six consecutive runs. **Left deliberately**, to find out whether it happens rather than to defend against it in advance. Closing it means arming whenever a member is *currently blocked* rather than when they were *just told no* — simpler, and it fires more often. That is a product call, and the evidence for making it does not exist yet.
+
 ## What day 12 was actually about
 
 Nine defects, four found by a person typing at the agent, and the largest found by asking *why* rather than accepting a fix.

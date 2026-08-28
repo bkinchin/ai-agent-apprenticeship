@@ -47,7 +47,18 @@ const state = () =>
 
 const clubRules = rulesFrom(loadStructured());
 const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-const SLOT = `${tomorrow}T09:20`;
+// A SLOT THAT IS BOOKABLE ON ANY DAY OF THE WEEK.
+//
+// This was 09:20 tomorrow, and on a Friday "tomorrow" is Saturday —
+// which is inside the 08:30–11:00 club competition window added on day
+// 12, so every check failed with "setup failed: not_permitted". The
+// suite was correct and the fixture had rotted; it would have passed
+// six days out of seven, which is worse than failing every day.
+//
+// The afternoon is outside every closure the club has, so this holds
+// whatever day it runs. Fixtures that encode assumptions about the
+// calendar break when the calendar moves.
+const SLOT = `${tomorrow}T14:20`;
 
 let failures = 0;
 const check = (label: string, ok: boolean, detail = "") => {
@@ -183,9 +194,9 @@ try {
     // instead — which is what a client without idempotency would end
     // up doing.
     const world0 = await state();
-    const hold2 = await holdSlot(`${tomorrow}T09:30`, "M-1001").catch(() => undefined);
+    const hold2 = await holdSlot(`${tomorrow}T14:30`, "M-1001").catch(() => undefined);
     if (hold2) {
-      await confirmBooking({ ...args, holdId: hold2.holdId, slotId: `${tomorrow}T09:30`, sessionId: "S-control2" });
+      await confirmBooking({ ...args, holdId: hold2.holdId, slotId: `${tomorrow}T14:30`, sessionId: "S-control2" });
     }
     const world = await state();
     check("without the key, the member ends up with two bookings",
@@ -242,7 +253,7 @@ try {
   console.log("\n6. amend — and the compensation when the new slot is gone");
   await reset();
   {
-    const wanted = `${tomorrow}T13:00`;
+    const wanted = `${tomorrow}T15:00`;
     const mine = await bookTeeTime({
       slotId: SLOT, memberId: "M-1001", partySize: 1, guests: 0,
       sessionId: "S-amend", clubRules, step: 1,

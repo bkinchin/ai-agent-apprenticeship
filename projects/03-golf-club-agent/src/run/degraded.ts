@@ -19,7 +19,18 @@ import { rulesFrom } from "../core/rules.js";
 
 const clubRules = rulesFrom(loadStructured());
 const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-const SLOT = `${tomorrow}T10:40`;
+// A SLOT THAT IS BOOKABLE ON ANY DAY OF THE WEEK.
+//
+// This was 09:20 tomorrow, and on a Friday "tomorrow" is Saturday —
+// which is inside the 08:30–11:00 club competition window added on day
+// 12, so every check failed with "setup failed: not_permitted". The
+// suite was correct and the fixture had rotted; it would have passed
+// six days out of seven, which is worse than failing every day.
+//
+// The afternoon is outside every closure the club has, so this holds
+// whatever day it runs. Fixtures that encode assumptions about the
+// calendar break when the calendar moves.
+const SLOT = `${tomorrow}T14:40`;
 const docs = loadDocuments();
 const structured = loadStructured();
 
