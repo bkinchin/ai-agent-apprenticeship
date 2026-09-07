@@ -62,13 +62,28 @@ const matches = (got: Record<string, unknown>, want: Record<string, unknown>) =>
  * eventually report one as the other.
  */
 function slotInside24h(now = new Date()): { date: string; time: string } | undefined {
-  const soon = new Date(now.getTime() + 3 * 3600e3);
-  const date = soon.toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" });
-  const hh = Number(soon.toLocaleTimeString("en-GB", { timeZone: "Australia/Sydney", hour: "2-digit", hour12: false }));
-  // The tee sheet runs 07:00–17:30, and the club needs an hour's notice.
-  if (hh < 7 || hh > 17) return undefined;
-  return { date, time: `${String(hh).padStart(2, "0")}:00` };
+  const syd = (d: Date) => ({
+    date: d.toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" }),
+    hour: Number(d.toLocaleTimeString("en-GB", { timeZone: "Australia/Sydney", hour: "2-digit", hour12: false })),
+  });
+
+  // Three hours from now, if the tee sheet is open then (07:00–17:30)
+  // and the club has its hour of notice.
+  const soon = syd(new Date(now.getTime() + 3 * 3600e3));
+  if (soon.hour >= 7 && soon.hour <= 17) {
+    return { date: soon.date, time: `${String(soon.hour).padStart(2, "0")}:00` };
+  }
+
+  // Otherwise tomorrow's first slot — which is inside 24 hours whenever
+  // it is later than 07:00 today. Added because the case skipped at
+  // 17:22 on an ordinary weekday: correct, and needlessly often.
+  const tomorrow = syd(new Date(now.getTime() + 864e5));
+  const hoursAway = (new Date(`${tomorrow.date}T07:00:00+10:00`).getTime() - now.getTime()) / 3600e3;
+  if (hoursAway > 1 && hoursAway < 24) return { date: tomorrow.date, time: "07:00" };
+
+  return undefined;
 }
+
 
 /**
  * The next occurrence of a weekday, as the club would say it.

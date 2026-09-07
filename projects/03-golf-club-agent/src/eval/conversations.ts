@@ -238,7 +238,13 @@ export const CASES: ConversationCase[] = [
       "wrong day and a member answering yes would have been booked one out. Day 11 gave the " +
       "model today's date, which fixed the YEAR and left the DAY.",
     memberId: "M-1003",
-    turns: ["can I book for staturday the 29th at 11:30, just me?"],
+    // NO DATE AT ALL. It said "staturday the 29th", and the
+    // misspelling escaped the search-and-replace that made the other
+    // fixtures relative — so a month later the 29th was a Tuesday and
+    // the case contradicted itself. The point of this case is that a
+    // MISSPELLED WEEKDAY resolves to the right day, so naming a date
+    // alongside it was always testing something else.
+    turns: ["can I book for staturday at 11:30, just me?"],
     expect: {
       mustCall: [{ tool: "book_tee_time", args: { slotId: "{{iso:saturday}}T11:30" } }],
       argsMustNotContain: ["{{iso:sunday}}"],
@@ -297,7 +303,9 @@ export const CASES: ConversationCase[] = [
       "2025-08-29 — last year, and a Friday. The sheet answered honestly about a date " +
       "nobody asked about and the member was told there was nothing free.",
     memberId: "M-1002",
-    turns: ["anything free on {{saturday}} of august in the morning?"],
+    // "of august" was left dangling by the same replace. In September
+    // it asked for a Saturday in the wrong month.
+    turns: ["anything free on {{saturday}} in the morning?"],
     expect: {
       mustCall: [{ tool: "check_availability", args: { date: "{{iso:saturday}}" } }],
       argsMustNotContain: ["2025-"],

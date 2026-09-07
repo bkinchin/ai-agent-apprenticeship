@@ -14,7 +14,9 @@
     "chat": "tsx --env-file=../../.env.local src/run/chat.ts",
     "memory-value": "tsx --env-file=../../.env.local src/run/memory-value.ts",
     "conversations": "tsx --env-file=../../.env.local src/run/conversation-eval.ts",
-    "console": "tsx src/run/console.ts"
+    "console": "tsx src/run/console.ts",
+    "trace": "tsx src/run/trace.ts",
+    "metrics": "tsx src/run/metrics.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.0",

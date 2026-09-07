@@ -39,8 +39,11 @@
 // accepted deliberately, because a club telling members what things cost
 // should be right more than it should be smooth.
 
+import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
+import { computeVersions } from "../observe/versions.js";
+import { setVersions, span, trace } from "../observe/tracer.js";
 import { buildHandoff, memberMessage, type Handoff } from "../escalation/handoff.js";
 import { askedForAHuman, soundsFrustrated, vulnerability } from "../escalation/policy.js";
 import { Actions, Queue, type PendingAction } from "../escalation/queue.js";
@@ -76,6 +79,7 @@ const client = new Anthropic();
 const docs = loadDocuments();
 const structured = loadStructured();
 const rules = rulesFrom(structured);
+
 const closures = rules.closures;
 
 /**
@@ -168,6 +172,8 @@ export interface Session {
    */
   halted?: Handoff;
   /** Tool signatures this session, for loop detection. */
+  /** One conversation, one trace. */
+  traceId: string;
   fired: string[];
   /**
    * Everything that has actually happened this SESSION.
@@ -224,6 +230,7 @@ export const newSession = (memberId: string): Session => ({
   history: [],
   offered: new Map(),
   memories: memory.recall(memberId),
+  traceId: randomUUID(),
   fired: [],
   happened: [],
   fruitless: 0,
@@ -747,6 +754,23 @@ function held(s: Session): string {
   return `\n\nTheir current bookings, from the tee sheet just now:\n${lines.join("\n")}${full}`;
 }
 
+// STAMPED ON EVERY SPAN, and computed from content rather than
+// declared. Every YAML here carries a hand-maintained `last_updated`,
+// which is a claim somebody has to remember to make true.
+//
+// The prompt version hashes systemPrompt's own SOURCE — the template,
+// not the rendered string, which varies per member with their memories
+// and bookings. Two members on the same prompt must stamp the same
+// version, or the field cannot answer "what changed on Monday".
+setVersions(
+  computeVersions({
+    model: MODEL,
+    promptTemplate: systemPrompt.toString(),
+    docs: docs.map((d) => ({ id: d.id, body: d.body })),
+    structured,
+  }),
+);
+
 /**
  * Memory, framed as fallible — which is the whole point of the format.
  *
@@ -859,6 +883,18 @@ function escalate(
     sentiment,
   });
   queue.add(handoff);
+  void span(
+    {
+      type: "escalation",
+      name: triggerId,
+      input: { summary, sentiment },
+      meta: () => ({
+        output: { ref: handoff.ref, urgency: handoff.urgency, team: handoff.team, missing: handoff.missing },
+        outcome: "denied" as const,
+      }),
+    },
+    async () => handoff,
+  );
   return { kind: "escalated", handoff };
 }
 
@@ -935,6 +971,35 @@ const liveModel: ModelFn = async (req) => {
 
 /** One member turn. Returns everything the member should see, in order. */
 export async function turn(
+  s: Session,
+  input: string,
+  model: ModelFn = liveModel,
+): Promise<Reply[]> {
+  // ONE CONVERSATION IS ONE TRACE. Every span below nests inside it,
+  // and the whole thing is wrapped rather than reported afterwards so
+  // that duration and outcome are facts rather than something the
+  // caller has to remember to get right.
+  return trace({ sessionId: s.sessionId, memberId: s.memberId, traceId: s.traceId }, () =>
+    span(
+      {
+        type: "turn",
+        name: `turn.${s.history.filter((m) => typeof m.content === "string").length + 1}`,
+        input,
+        meta: (replies: Reply[]) => ({
+          output: replies.map((r) => (r.kind === "trace" ? `→${r.tool}` : r.kind)),
+          outcome: replies.some((r) => r.kind === "escalated")
+            ? ("denied" as const)
+            : replies.some((r) => r.kind === "error")
+              ? ("error" as const)
+              : ("ok" as const),
+        }),
+      },
+      () => runTurn(s, input, model),
+    ),
+  );
+}
+
+async function runTurn(
   s: Session,
   input: string,
   model: ModelFn = liveModel,
@@ -1099,8 +1164,31 @@ export async function turn(
   }
 
   for (let i = 0; i < MAX_STEPS; i++) {
-    const response = await model({
-      system: systemPrompt(s),
+    const rendered = systemPrompt(s);
+    const response = await span(
+      {
+        type: "llm",
+        name: `llm.turn-step-${i + 1}`,
+        // THE FULL CONTEXT WINDOW. The field people drop to save space
+        // and then need — it is the input to the decision, and without
+        // it a trace can say what the model did and never why.
+        input: { system: rendered, messages: s.history, toolChoice: i === 0 ? "any" : "auto" },
+        meta: (r: Awaited<ReturnType<ModelFn>>) => {
+          // Cost attribution lives on the span that spent it, so "cost
+          // per resolution" is a query rather than an estimate.
+          const u = (r as { usage?: { input_tokens: number; output_tokens: number } }).usage;
+          const price = MODEL.includes("haiku") ? { in: 1, out: 5 } : { in: 5, out: 25 };
+          return {
+            output: r.content,
+            tokensIn: u?.input_tokens ?? 0,
+            tokensOut: u?.output_tokens ?? 0,
+            costAud: ((u?.input_tokens ?? 0) / 1e6) * price.in + ((u?.output_tokens ?? 0) / 1e6) * price.out,
+            outcome: "ok" as const,
+          };
+        },
+      },
+      () => model({
+      system: rendered,
       tools: TOOLS,
       // THE MODEL DOES NOT GET TO DECIDE WHETHER A QUESTION IS IN SCOPE.
       //
@@ -1129,7 +1217,8 @@ export async function turn(
       // text, or a non-terminal tool result could never be narrated.
       tool_choice: i === 0 ? { type: "any" } : { type: "auto" },
       messages: s.history,
-    });
+      }),
+    );
 
     s.history.push({ role: "assistant", content: response.content });
 
@@ -1190,7 +1279,22 @@ export async function turn(
         );
         return ordered(out);
       }
-      const { reply, forModel, effectiveArgs, ok, detail } = await execute(s, call.name, call.input);
+      const { reply, forModel, effectiveArgs, ok, detail } = await span(
+        {
+          type: call.name === "search_knowledge" ? "knowledge" : "tool",
+          name: call.name,
+          input: call.input,
+          meta: (r: Awaited<ReturnType<typeof execute>>) => ({
+            // WHAT WAS EXECUTED, not what was requested. Day 12 had a
+            // trace log the model's arguments as though they were the
+            // outcome, and everything downstream read a request as a
+            // fact.
+            output: { args: r.effectiveArgs ?? call.input, note: r.forModel, detail: r.detail },
+            outcome: r.ok === false ? ("denied" as const) : ("ok" as const),
+          }),
+        },
+        () => execute(s, call.name, call.input),
+      );
       // THE TRACE RECORDS WHAT WAS DONE, NOT WHAT WAS ASKED FOR.
       //
       // A guard corrected a party size from four to one and the trace
@@ -1302,6 +1406,23 @@ async function execute(
     const r = await ask(question, docs, structured);
     usage.input += r.usage.input;
     usage.output += r.usage.output;
+    // The knowledge lookup is a SECOND model call inside a tool span,
+    // and its cost is invisible on the routing span above it.
+    void span(
+      {
+        type: "knowledge",
+        name: "ask",
+        input: { question },
+        meta: () => ({
+          output: { status: r.answer?.status, citations: r.answer?.citations, bad: r.badCitations },
+          tokensIn: r.usage.input,
+          tokensOut: r.usage.output,
+          costAud: (r.usage.input / 1e6) * 1 + (r.usage.output / 1e6) * 5,
+          outcome: (r.badCitations.length > 0 ? "error" : "ok") as "ok" | "error",
+        }),
+      },
+      async () => r,
+    );
     if (!r.answer) {
       return {
         reply: { kind: "error", text: "Something went wrong looking that up — try me again?" },

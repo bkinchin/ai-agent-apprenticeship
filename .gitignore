@@ -44,3 +44,6 @@ eval-findings/
 
 # day-12 escalation queue (runtime state, and personal data)
 .queue.db
+
+# day-13 trace store (runtime state, and personal data)
+.traces.db
