@@ -25,23 +25,71 @@ interface Row {
   payload: string;
 }
 
-if (!arg) {
+// FILTERING, because narrowing is the whole job.
+//
+//   npm run trace --abstained     conversations where it declined
+//   npm run trace --denied        where a guard fired
+//   npm run trace --errors        where something failed
+//   npm run trace guest           whose question matched "guest"
+//
+// Added during a debugging exercise, on the third occasion of scrolling
+// a list looking for the two rows that mattered. A viewer that can only
+// list is a viewer that stops being used at twenty rows.
+const FLAGS = ["--abstained", "--denied", "--errors"];
+const flag = process.argv.slice(2).find((a) => FLAGS.includes(a));
+const search = process.argv[2] && !process.argv[2].startsWith("--") && !process.argv[2].startsWith("s-")
+  ? process.argv[2]
+  : undefined;
+
+if (!arg || flag || search) {
+  // WHAT THE CONVERSATION WAS ABOUT, not just that it happened.
+  //
+  // The first version listed ten sessions with a cost each, which told
+  // you nothing you could act on — finding the two conversations where
+  // the agent declined meant opening all ten. Found by using it: the
+  // exercise asks "what data did you wish you had? Add it."
   const rows = db.prepare(
-    `SELECT sessionId, subject, MIN(startedAt) AS at, COUNT(*) AS spans,
-            SUM(costAud) AS cost, SUM(durationMs) AS ms,
-            SUM(outcome = 'denied') AS denied, SUM(outcome = 'error') AS errors
+    `SELECT sessionId, MIN(startedAt) AS at, COUNT(*) AS spans,
+            SUM(costAud) AS cost,
+            SUM(outcome = 'denied') AS denied,
+            SUM(outcome = 'error') AS errors,
+            SUM(payload LIKE '%not_in_knowledge_base%') AS abstained,
+            MIN(CASE WHEN type = 'turn' THEN payload END) AS firstTurn
      FROM spans GROUP BY sessionId ORDER BY at DESC LIMIT 20`,
   ).all() as Record<string, string | number>[];
-  console.log(`\n${rows.length} recent conversation(s)\n`);
-  for (const r of rows) {
-    const flags = [Number(r.denied) ? "\x1b[33mdenied\x1b[0m" : "", Number(r.errors) ? "\x1b[31merrors\x1b[0m" : ""].filter(Boolean).join(" ");
+
+  const matching = rows.filter((r) => {
+    if (flag === "--abstained" && !Number(r.abstained)) return false;
+    if (flag === "--denied" && !Number(r.denied)) return false;
+    if (flag === "--errors" && !Number(r.errors)) return false;
+    if (search && !String(r.firstTurn ?? "").toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  const label = flag ?? (search ? `matching "${search}"` : "recent");
+  console.log(`\n${matching.length} ${label} conversation(s)\n`);
+  for (const r of matching) {
+    let asked = "";
+    try {
+      asked = String((JSON.parse(String(r.firstTurn ?? "{}")) as { input?: string }).input ?? "");
+    } catch {
+      asked = "";
+    }
+    const flags = [
+      Number(r.abstained) ? "\x1b[33mabstained\x1b[0m" : "",
+      Number(r.denied) ? "\x1b[33mdenied\x1b[0m" : "",
+      Number(r.errors) ? "\x1b[31merrors\x1b[0m" : "",
+    ].filter(Boolean).join(" ");
     console.log(
-      `  ${String(r.at).slice(0, 19).replace("T", " ")}  ${String(r.sessionId).padEnd(26)}` +
-        `${String(r.spans).padStart(3)} spans  $${Number(r.cost).toFixed(4)}  ${flags}`,
+      `  ${String(r.at).slice(5, 16).replace("T", " ")}  ${String(r.sessionId).padEnd(24)}` +
+        `$${Number(r.cost).toFixed(4)}  ${flags}`,
     );
+    console.log(`  ${dim(`             ${asked.slice(0, 72)}`)}`);
   }
   console.log(`\n${dim("npm run trace <sessionId>        the tree")}`);
-  console.log(`${dim("npm run trace <sessionId> full   with every input and output")}\n`);
+  console.log(`${dim("npm run trace <sessionId> full   with every input and output")}`);
+  console.log(`${dim("npm run trace --abstained        only where it declined")}`);
+  console.log(`${dim("npm run trace <word>             only questions matching a word")}\n`);
   process.exit(0);
 }
 
