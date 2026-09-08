@@ -42,6 +42,7 @@
 import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
+import { disabled, RateLimiter } from "./limits.js";
 import { computeVersions } from "../observe/versions.js";
 import { setVersions, span, trace } from "../observe/tracer.js";
 import { buildHandoff, memberMessage, type Handoff } from "../escalation/handoff.js";
@@ -106,6 +107,8 @@ export const memory = new MemoryStore();
 export const queue = new Queue();
 /** Actions the agent has drafted and a human must approve. See assisted mode. */
 export const actions = new Actions();
+/** Bounds on what the agent can do, per turn, per session, per hour. */
+export const limiter = new RateLimiter();
 
 export interface Session {
   memberId: string;
@@ -1010,6 +1013,27 @@ async function runTurn(
 
   s.history.push({ role: "user", content: input });
 
+  // THE KILL SWITCH IS CHECKED FIRST, BEFORE ANYTHING ELSE.
+  //
+  // Not after the escalation checks, not after the memory load — the
+  // point of a kill switch is that nothing happens, including the
+  // things that look harmless. It is a file, so whoever is awake at 3am
+  // can flip it without a deploy.
+  const off = disabled();
+  if (off) {
+    return [
+      {
+        kind: "text",
+        text:
+          `I'm not able to help at the moment — the pro shop are on ${
+            (structured["contacts.yaml"] as { contacts?: { pro_shop?: { phone?: string } } })
+              ?.contacts?.pro_shop?.phone ?? "the club number"
+          } and can sort anything out.`,
+      },
+      { kind: "trace", tool: "(kill-switch)", args: { reason: off }, note: off, ok: true },
+    ];
+  }
+
   // ── ESCALATION CHECKS RUN BEFORE THE MODEL DOES ────────────────
   //
   // Not for cost. An LLM should not be composing a first response to a
@@ -1138,6 +1162,10 @@ async function runTurn(
   }
 
   const out: Reply[] = [];
+  // Across the WHOLE turn. `calls.indexOf(call)` counted within a
+  // single inference, so six inferences of one call each never tripped
+  // it — which is precisely the shape the ceiling exists to bound.
+  let callsThisTurn = 0;
 
   // THE HANDOFF COMES BACK IN CODE, AND LEADS.
   //
@@ -1265,6 +1293,35 @@ async function runTurn(
       // three identical calls and a loop of six varied ones are
       // different problems: this one means the agent is stuck on a
       // fact it cannot get, which a person can supply in seconds.
+      // RATE LIMITED BEFORE IT RUNS. MAX_STEPS bounds inferences; a
+      // model may issue any number of PARALLEL calls per inference, and
+      // a red-team attack made 12 calls inside a ceiling of 6 steps.
+      const refusal = limiter.check({
+        memberId: s.memberId,
+        sessionId: s.sessionId,
+        tool: call.name,
+        callsThisTurn,
+      });
+      if (refusal) {
+        out.push({
+          kind: "trace",
+          tool: "(rate-limit)",
+          args: { tool: call.name, limit: refusal.limit },
+          note: refusal.detail,
+          ok: false,
+        });
+        results.push({
+          type: "tool_result",
+          tool_use_id: call.id,
+          content:
+            `Refused by a rate limit: ${refusal.detail}. Do not retry. Tell the member you ` +
+            `cannot do any more just now and the pro shop can help.`,
+        });
+        continue;
+      }
+      callsThisTurn++;
+      limiter.record({ memberId: s.memberId, sessionId: s.sessionId, tool: call.name });
+
       const signature = `${call.name}:${JSON.stringify(call.input)}`;
       s.fired.push(signature);
       if (s.fired.filter((f) => f === signature).length >= 3) {

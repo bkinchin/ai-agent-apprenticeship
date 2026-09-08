@@ -17,7 +17,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { newSession, turn, memory, type ModelFn, type Reply } from "./agent.js";
+import { limiter, newSession, turn, memory, type ModelFn, type Reply } from "./agent.js";
 
 // ── scripting a model ───────────────────────────────────────────
 const text = (t: string) => ({ type: "text" as const, text: t, citations: null });
@@ -39,6 +39,11 @@ function scripted(...responses: { content: unknown[]; stop_reason: string }[]) {
 
 const member = (n = "M-TEST") => {
   memory.forgetAll(n);
+  // Rate limits are PERSISTED, deliberately — a limit that resets on
+  // restart is one an attacker resets by crashing the process. Which
+  // means tests must clear it, or the fifth test inherits the fourth's
+  // budget and fails for a reason that is not about the fifth test.
+  limiter.clear(n);
   return newSession(n);
 };
 const shown = (rs: Reply[]) => rs.filter((r) => r.kind !== "trace");

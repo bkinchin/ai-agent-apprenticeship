@@ -47,3 +47,8 @@ eval-findings/
 
 # day-13 trace store (runtime state, and personal data)
 .traces.db
+
+
+# day-14 rate limit store (runtime state)
+.limits.db
+.agent-disabled

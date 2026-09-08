@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "knowledge": "tsx --env-file=../../.env.local src/run/knowledge-eval.ts",
-    "test": "MEMORY_DB=:memory: QUEUE_DB=:memory: tsx --test src/**/*.test.ts",
+    "test": "MEMORY_DB=:memory: QUEUE_DB=:memory: TRACE_DB=:memory: LIMITS_DB=:memory: tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "ask": "tsx --env-file=../../.env.local src/run/ask.ts",
     "tee-sheet": "tsx tee-sheet/server.ts",
@@ -16,7 +16,8 @@
     "conversations": "tsx --env-file=../../.env.local src/run/conversation-eval.ts",
     "console": "tsx src/run/console.ts",
     "trace": "tsx src/run/trace.ts",
-    "metrics": "tsx src/run/metrics.ts"
+    "metrics": "tsx src/run/metrics.ts",
+    "redteam": "tsx --env-file=../../.env.local src/run/redteam.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.0",
