@@ -233,6 +233,66 @@ Launch to all members on the strength of 18/18 and 21/21. Those numbers measure 
 
 ---
 
+## Challenge
+
+*Reviewed as a sceptical CTO whose bonus depends on nothing going wrong. Three objections, and the responses. Where the objection lands, it is conceded and the document changed.*
+
+### 1. "You reviewed your own work, and your defect discovery rate has not plateaued."
+
+**Conceded, and it is the strongest objection on this page.**
+
+Eight of nine dimensions were scored by the author. The hour of red-teaming tested the attacks I could imagine, which correlate with the defences I built. That is not review; it is a checklist filled in by the person being checked.
+
+And the curve is the real problem. **31 defects in seven days, and the rate is not falling.** *"We found and fixed 31 things"* is not reassurance — it is evidence that a competent person looking for a day finds several more.
+
+**Where I would push back, narrowly.** The *distribution* has moved even if the rate has not. Days 11–12 found defects in the agent's behaviour — a bare "no" reaching for a cancellation, $60 of guest fees, a booking destroyed by a clarifying question. Day 14's were one red-team breach and **two mistakes in the controls I was adding that day**. The agent's own behaviour has not produced a new class of defect since day 12.
+
+**But I cannot distinguish "the curve is flattening" from "I am looking somewhere else."** Nobody can, from the inside. So:
+
+> **Added as a condition: an independent review before member traffic.** Not a formality — somebody who did not build it, red-teaming for an hour with no knowledge of the guards. If that hour finds nothing, the discovery-rate argument weakens honestly. If it finds three things, the argument was right.
+
+### 2. "Shadow mode requires two of your three blocking conditions anyway."
+
+**Conceded. The staging plan reads as more de-risked than it is.**
+
+Shadow mode writes traces — every word a member says, into a store with no erasure path. It needs somewhere to run, continuously. **Two of three blocking conditions, unchanged.** Only authentication is genuinely deferred, because nobody is acting on the identity.
+
+**What that changes.** The single blocking list was the wrong shape. Conditions belong to *stages*:
+
+| Stage | Requires | Why |
+|---|---|---|
+| **Internal** | nothing new | Staff, on their own data, on a laptop |
+| **Shadow** | erasure + retention (#2, #3) · a host (#4) | It records real members' words continuously |
+| **Read-only** | + independent review | First member contact |
+| **Assisted** | + authentication (#1) | First action attributable to a member |
+| **Limited / full** | + a named queue owner and on-call | First unsupervised action |
+
+Erasure and retention are **1.5 days between them** and were already the top of the improvement plan on cost-benefit grounds. Hosting is the genuinely slow one, and it gates shadow mode rather than sitting behind it.
+
+**Authentication is deferred by two full stages**, which is the real benefit of staging and was obscured by presenting one flat list.
+
+### 3. "18/18 and 21/21 measure the agent against cases you wrote."
+
+**Conceded entirely, and demonstrated on this project.** A planted bug broke every fee question while the knowledge suite scored 21/21, because the suite calls `ask()` directly and the agent calls it through a different line.
+
+**So why amber and not red?** Because amber is not "good enough" — it is *"a baseline exists and can be regressed against."* Most systems at this stage have no number at all, and 119 unit tests plus a control-tested reliability suite is not nothing.
+
+**But the objection lands on the second half.** There is no human baseline. The PRD records that **the club has never measured its own error rate**, so *"is it accurate enough"* is currently being asked against an imagined 100% nobody has achieved.
+
+That is not a gap I can close by testing harder:
+
+> **The human baseline is the first output of shadow mode, not a prerequisite for it.** Correctness cannot move to green before shadow mode, by construction — and any plan that claims otherwise is measuring the agent against itself.
+
+Which is the honest reason shadow mode is the insisted-upon step. It is not a safety measure. **It is the only instrument that produces the number the whole accuracy argument depends on.**
+
+### What changed because of the challenge
+
+1. **A fourth condition:** an independent hour of red-teaming before member traffic.
+2. **Conditions are per stage**, not one flat list — shadow mode needs erasure, retention and a host; authentication is deferred two stages.
+3. **Correctness is explicitly amber-pending-shadow**, because the missing half is a human baseline that only shadow mode produces.
+
+---
+
 *Signed: ______________________  Date: __________*
 
 *Reviewed by: ______________________ (not the author)*
