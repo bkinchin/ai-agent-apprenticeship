@@ -19,6 +19,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { CASES, type ConversationCase } from "../eval/conversations.js";
+import { BASE } from "../tools/client.js";
 import { memory, newSession, spent, turn, usage, type Reply } from "../core/agent.js";
 import { MODEL } from "../core/answer.js";
 import { contactsFrom, guestFeeFrom, memberText } from "../core/render.js";
@@ -142,7 +143,23 @@ async function runCase(c: ConversationCase): Promise<Result> {
 
   memory.forgetAll(c.memberId);
   if (existsSync(IDEM)) unlinkSync(IDEM);
-  await fetch("http://localhost:4010/_reset", { method: "POST" }).catch(() => {});
+  // FROM THE SAME PLACE THE TOOLS GET IT, and loudly.
+  //
+  // This hardcoded :4010 while the tools read TEE_SHEET_URL — the third
+  // instance of two sources of truth for one address in this project.
+  // Under the pre-push hook, which uses a spare port so it cannot
+  // collide with a tee sheet you left running, the reset went nowhere
+  // and the .catch(() => {}) swallowed the evidence. State accumulated
+  // between cases, members hit the two-booking limit, and six booking
+  // cases failed for a reason that had nothing to do with the agent.
+  //
+  // The suite passed by hand on 4010 and failed under the hook. A reset
+  // that can fail silently is a suite that shares state without saying
+  // so — so this one throws.
+  const reset = await fetch(`${BASE}/_reset`, { method: "POST" }).catch(() => undefined);
+  if (!reset?.ok) {
+    throw new Error(`could not reset the tee sheet at ${BASE} — is it running on this port?`);
+  }
 
   const s = newSession(c.memberId);
   try {
