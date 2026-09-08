@@ -1403,26 +1403,29 @@ async function execute(
 }> {
   if (name === "search_knowledge") {
     const { question } = input as { question: string };
-    const r = await ask(question, docs, structured);
-    usage.input += r.usage.input;
-    usage.output += r.usage.output;
-    // The knowledge lookup is a SECOND model call inside a tool span,
-    // and its cost is invisible on the routing span above it.
-    void span(
+    // WRAPPED, not reported afterwards. The previous version emitted
+    // this span around an already-resolved value, so every one recorded
+    // 0ms — a duration that is not merely missing but WRONG, in the
+    // column you would use to find a slow call.
+    const r = await span(
       {
         type: "knowledge",
         name: "ask",
-        input: { question },
-        meta: () => ({
-          output: { status: r.answer?.status, citations: r.answer?.citations, bad: r.badCitations },
-          tokensIn: r.usage.input,
-          tokensOut: r.usage.output,
-          costAud: (r.usage.input / 1e6) * 1 + (r.usage.output / 1e6) * 5,
-          outcome: (r.badCitations.length > 0 ? "error" : "ok") as "ok" | "error",
+        // THE FULL CONTEXT WINDOW, like every other llm call.
+        input: { question, system: "" },
+        meta: (x: Awaited<ReturnType<typeof ask>>) => ({
+          input: { question, system: x.systemPrompt },
+          output: { status: x.answer?.status, citations: x.answer?.citations, bad: x.badCitations },
+          tokensIn: x.usage.input,
+          tokensOut: x.usage.output,
+          costAud: (x.usage.input / 1e6) * 1 + (x.usage.output / 1e6) * 5,
+          outcome: (x.badCitations.length > 0 ? "error" : "ok") as "ok" | "error",
         }),
       },
-      async () => r,
+      () => ask(question, docs, structured),
     );
+    usage.input += r.usage.input;
+    usage.output += r.usage.output;
     if (!r.answer) {
       return {
         reply: { kind: "error", text: "Something went wrong looking that up — try me again?" },

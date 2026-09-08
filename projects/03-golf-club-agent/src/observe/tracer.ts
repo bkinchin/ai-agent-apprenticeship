@@ -216,7 +216,24 @@ export async function span<T>(
     name: string;
     input?: unknown;
     /** Read from the result. Cheaper than making every caller report it. */
-    meta?: (result: T) => { output?: unknown; tokensIn?: number; tokensOut?: number; costAud?: number; outcome?: Outcome };
+    /**
+     * Read from the result. Cheaper than making every caller report it.
+     *
+     * `input` may be overridden here, for the case where the real input
+     * is not known until the work has run — the knowledge call builds
+     * its own context window inside ask(), and that window is the whole
+     * reason the span exists. The first version accepted this field and
+     * silently ignored it, so the trace recorded an empty prompt and a
+     * debugging exercise stalled on a field that looked present.
+     */
+    meta?: (result: T) => {
+      input?: unknown;
+      output?: unknown;
+      tokensIn?: number;
+      tokensOut?: number;
+      costAud?: number;
+      outcome?: Outcome;
+    };
   },
   fn: () => Promise<T>,
 ): Promise<T> {
@@ -228,11 +245,16 @@ export async function span<T>(
   // No context means nobody opened a trace — the work still runs.
   const parent = ctx ? { ...ctx } : undefined;
 
-  const emit = (outcome: Outcome, output: unknown, extra: Partial<Span>, error?: string) => {
+  const emit = (
+    outcome: Outcome,
+    output: unknown,
+    extra: Partial<Span> & { input?: unknown },
+    error?: string,
+  ) => {
     if (!parent) return;
     try {
       // REDACTED HERE, ON THE WAY IN. Not at display.
-      const inRed = redactDeep(args.input ?? null);
+      const inRed = redactDeep(extra.input ?? args.input ?? null);
       const outRed = redactDeep(output ?? null);
       buffer.push({
         traceId: parent.traceId,

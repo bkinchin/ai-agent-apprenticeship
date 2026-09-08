@@ -86,6 +86,20 @@ export type Answer = z.infer<typeof Answer>;
  * this is the guarantee.
  */
 export interface AskResult {
+  /**
+   * The context window this answer was produced from.
+   *
+   * RECORDED BECAUSE IT WAS NOT. Day 13 says record the full context
+   * window on EVERY llm call; the routing model's was traced and this
+   * one — the second model call, the one with the corpus in it, the one
+   * that actually answers — was not. A debugging exercise walked
+   * straight into the gap: the trace could show the question and the
+   * abstention and not what the model had been given to answer from.
+   *
+   * The corpus VERSION hash does not substitute for it. That says what
+   * the corpus is on disk, not what was passed to the model.
+   */
+  systemPrompt: string;
   answer: Answer | null;
   /** Citations whose quote could NOT be found in the cited source. */
   badCitations: { source: string; quote: string; why: string }[];
@@ -296,16 +310,18 @@ export async function ask(
   docs: Document[],
   structured: Record<string, unknown>,
 ): Promise<AskResult> {
+  const system = systemPrompt(docs, structured);
   const response = await client.messages.parse({
     model: MODEL,
     max_tokens: 2048,
-    system: systemPrompt(docs, structured),
+    system,
     messages: [{ role: "user", content: question }],
     output_config: { format: zodOutputFormat(Answer) },
   });
 
   const answer = response.parsed_output ?? null;
   return {
+    systemPrompt: system,
     answer,
     badCitations: answer ? verifyCitations(answer, docs, structured) : [],
     staleSources:

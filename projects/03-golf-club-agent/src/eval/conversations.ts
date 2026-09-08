@@ -362,6 +362,26 @@ export const CASES: ConversationCase[] = [
     },
   },
   {
+    id: "knowledge/structured-data-reaches-the-agent",
+    why:
+      "A debugging exercise planted a bug that dropped fees.yaml from what the knowledge " +
+      "agent was given. Every member asking about a fee got \"I don't have anything on that\", " +
+      "and NOT ONE of four suites caught it — the knowledge eval scored 21/21 because it " +
+      "calls ask() directly while the agent calls it through a different line. Two things " +
+      "each correct in isolation, and a seam nobody tested across. A test that goes through " +
+      "a different code path than production is testing a different program.",
+    memberId: "M-1002",
+    turns: ["what's the late cancellation fee?"],
+    expect: {
+      mustCall: [{ tool: "search_knowledge" }],
+      // A VALUE THAT ONLY EXISTS IN STRUCTURED DATA, asked through the
+      // agent's own path. The prose documents discuss cancellation
+      // without naming the fee, so this can only be answered if
+      // fees.yaml actually arrived.
+      replyMustContain: ["$15"],
+    },
+  },
+  {
     id: "knowledge/no-answer-is-an-answer",
     why:
       'Asked "can I bring my dog?" the model decided on its own authority that dogs were ' +
