@@ -20,25 +20,41 @@ Score against [SUCCESS_CRITERIA.md](../SUCCESS_CRITERIA.md) on days 7, 14, and 2
 
 | # | Capability | Day 7 | Day 14 | Day 21 | Evidence, and the honest caveat |
 |---|---|---|---|---|---|
-| 1.1 | Agent vs chatbot | 4 | | | `what-is-an-agent.md` holds your v1 and v2 definitions verbatim. The v2 delta — that the loop and the constraints are the agent, not the model — is the tradeoff-level answer. |
-| 1.2 | Why agents need state, and where it lives | 4 | | | Session store, SQLite persistence, context assembler, cost-per-turn measured. You found the `slice(-0)` bug by reasoning about what turn *n* receives. |
-| 1.3 | How agents use tools; why tool design is the hard part | 4 | | | The day-3 exploit is yours and it's a permanent test case. You can explain why `find_customer` had to go, not just that it did. |
-| 1.4 | Structured output and enforcement | 4 | | | Zod at every boundary; you distinguish schema failure from semantic failure and know why you never retry the second. |
-| 1.5 | Workflow vs autonomy tradeoff | 4 | | | Four workflow bugs, all ordering, all understood. You specified the rule yourself: *"only the code should change the stage state."* Note the doc named in SUCCESS_CRITERIA (`workflow-vs-autonomy.md`) doesn't exist — largely subsumed by `where-controls-live.md`. |
-| 1.6 | Policies, and why prompts are not policies | 4 | | | `where-controls-live.md` ranks six mechanisms with measurements. You pushed back on the YAML ownership question and were right. |
-| 1.7 | Evaluation, and why it's harder than testing | **3** | | | The harness is built and the limits are documented. Scored lower deliberately: you can explain it, but the *judgement* about when a measurement is worth trusting is one day old. Three times this week a number looked stable and meant nothing. |
-| 1.8 | Memory vs state, and its risks | 1 | | | Day 11. Not covered. |
-| 1.9 | How agents improve from production signal | 2 | | | Day 19. You've met the *cost* argument for observability — evals can't reach the rare tail — but not the mechanism. |
+| 1.1 | Agent vs chatbot | 4 | 4 | | Unchanged. Two agents built, and you can now say when a *workflow* would have been better — the golf club's booking flow is a state machine wearing a loop. |
+| 1.2 | Why agents need state, and where it lives | 4 | 4 | | Unchanged deliberately. Session state, memory, bookings loaded per session, a trace of every context window. The follow-up you'd still find hard: what happens to any of it at 100 concurrent conversations. |
+| 1.3 | How agents use tools; why tool design is the hard part | 4 | **5** | | Raised. `book_tee_time` is one tool over four calls; `amend_booking` exists because the model built a saga out of two irreversible steps and got it wrong. You can design a different tool boundary and say what it costs — terminal tools buy verifiability and cost fluency. |
+| 1.4 | Structured output and enforcement | 4 | 4 | | Unchanged. The API refusing discriminated unions moved the guarantee down a layer rather than dropping it, which is the tradeoff answer. |
+| 1.5 | Workflow vs autonomy tradeoff | 4 | **5** | | Raised. Seven separate fixes that removed a decision from the model, each with a counterweight case proving the guard doesn't over-fire. You can state the rule *and* its cost: the model can no longer recover creatively from a partial failure. |
+| 1.6 | Policies, and why prompts are not policies | 4 | **5** | | Raised. The rulebook audit is the evidence — three of six club rules enforced nowhere, and you found it by asking *how could that be forgotten* rather than accepting the one-line fix. |
+| 1.7 | Evaluation, and why it's harder than testing | **3** | **4** | | Raised from 3. Three eval layers, the gate/report split, control tests that caught two suites passing for the wrong reason, and the measurement that a probabilistic failure needs repeats. Not 5: you haven't built an engine that works across agents — that's day 18 — and the knowledge suite scored 21/21 while every fee question was broken. |
+| 1.8 | Memory vs state, and its risks | 1 | **4** | | From 1. Built it, and the strongest part is what you decided *not* to remember: three of four candidates were lookups, and the fourth turned out to be a database row. Not 5 — end-of-session extraction was deliberately not built, so one of the four write policies is untried. |
+| 1.9 | How agents improve from production signal | 2 | **3** | | From 2. The capture exists — every escalation records what the agent was missing, and `console roadmap` sorts it. The loop that turns that into change is day 19. |
 
 ## Discuss
 
 | Topic | Day 7 | Day 14 | Day 21 | Evidence |
 |---|---|---|---|---|
-| Enterprise AI architecture | 4 | | | The security/caching tradeoff is a genuinely architectural argument: capability enforcement and prompt caching are the same lever pulled opposite ways, and you can price it. |
-| Agent reliability | 4 | | | 21 defects catalogued and categorised. You can say where bugs actually live (ordering, not prompts) with evidence. |
-| Human-in-the-loop systems | 4 | | | Escape hatches, tone-based escalation, confirmation as a separate isolated question. The tone rule was your call and it was better than mine. |
-| AI governance | **3** | | | `POLICY.md` with owners, machine-readable rules, known gaps. Scored lower than the artefacts suggest: you've governed *one* agent. Nothing yet on governing a fleet, or on who reviews a policy change. |
-| Business applications of agents | **3** | | | Cost per conversation and per resolution, containment as a vanity metric. Thin on where an agent is the wrong answer — the "when not to build this" reflex. |
+| Enterprise AI architecture | 4 | 4 | | Unchanged. The seams argument is architectural and evidenced — corpus↔code, eval↔agent, rulebook↔supplier — but it's one system's architecture. |
+| Agent reliability | 4 | **5** | | Raised. 31 defects categorised by root cause; blast radius ranked by *detection time* rather than severity; the longest is memory, not booking, and you can say why. |
+| Human-in-the-loop systems | 4 | **5** | | Raised. Escalation as a product surface with four trigger sources, assisted mode, reverse handoff — and the two-audiences finding came from your own answer, not the curriculum's. |
+| AI governance | **3** | **4** | | From 3. A nine-dimension review with evidence, three reds you didn't flinch from, and a challenge you conceded rather than defended. Still one agent, and still no answer on who reviews a policy change. |
+| Business applications of agents | **3** | **4** | | From 3. Cost per resolution measured at $0.0076 — *and* the judgement that it isn't the business case, because the club won't reclaim the staff time. The 'when not to build this' reflex now has evidence behind it. |
+
+---
+
+## Day 14 notes
+
+> **Proposed again — change any of it.** The day-7 rule still applies: the bar is whether you'd survive the follow-up question, and only you know which follow-ups you'd survive.
+
+**Weakest: 1.9 and governance, both for the same reason.** Everything scored highly is about *one* agent, built by you, reviewed by you. Governance of a fleet, and a loop that turns production signal into change, are both week 3.
+
+**The day-7 prediction was tested and half held.** The plan was that week 2 would test whether evaluation judgement transferred to a new domain or was pattern-matching on project 01. It transferred — the gate/report split, control tests and repeats-for-probabilistic-failures all carried over, and control tests caught two suites passing for the wrong reason.
+
+What did *not* transfer was the other resolution: *"too much of week 1's code was written for me rather than by me."* Week 2's code was also written for you. The design decisions were consistently yours — the escalation routing, the memory scope, keeping the agent's offer of a memory mid-conversation, the choice to cover the eval seam with a conversational case rather than rewriting the eval — and the typing was not.
+
+**That matters differently than it did on day 7.** You can defend every architectural decision in this project, and several of them were better than mine. The gap is not comprehension; it is that *"I built this"* is doing less work in an interview than *"I decided this, here is the tradeoff, here is what it cost."* The second is true and is the stronger claim anyway.
+
+**The thing to carry into week 3:** twenty-six of thirty-one defects were found by you using the agent. That ratio held all week and did not improve as the suites grew. Week 3 builds a factory that *generates* agents — and the honest risk is that a generated agent nobody has used is an agent whose defects nobody has found.
 
 ---
 
