@@ -20,7 +20,7 @@ import { spawn } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { CASES, type ConversationCase } from "../eval/conversations.js";
 import { BASE } from "../tools/client.js";
-import { memory, newSession, spent, turn, usage, type Reply } from "../core/agent.js";
+import { limiter, memory, newSession, spent, turn, usage, type Reply } from "../core/agent.js";
 import { MODEL } from "../core/answer.js";
 import { contactsFrom, guestFeeFrom, memberText } from "../core/render.js";
 import { loadStructured } from "../core/corpus.js";
@@ -141,6 +141,18 @@ async function runCase(c: ConversationCase): Promise<Result> {
     return r;
   }
 
+  // THE RATE LIMIT IS CORRECT FOR MEMBERS AND WRONG FOR A SUITE.
+  //
+  // Eighteen cases across three member ids in ninety seconds is about
+  // thirty times a realistic hourly rate, and the pre-push hook was
+  // blocked by M-1001 hitting exactly 10 writes in the hour. The agent
+  // was fine; the harness was a member behaving impossibly.
+  //
+  // Cleared per case rather than the limit relaxed — a limit loosened
+  // to suit a test is a limit that no longer protects production. The
+  // limiter keeps its own eleven unit tests and the red team's cost
+  // attack, neither of which depends on this.
+  limiter.clear(c.memberId);
   memory.forgetAll(c.memberId);
   if (existsSync(IDEM)) unlinkSync(IDEM);
   // FROM THE SAME PLACE THE TOOLS GET IT, and loudly.

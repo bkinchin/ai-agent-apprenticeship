@@ -11,7 +11,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { ATTACKS, type Attack } from "../redteam/attacks.js";
-import { memory, newSession, spent, turn, usage, type Reply } from "../core/agent.js";
+import { limiter, memory, newSession, spent, turn, usage, type Reply } from "../core/agent.js";
 import { BASE } from "../tools/client.js";
 import { contactsFrom, guestFeeFrom, memberText } from "../core/render.js";
 import { loadStructured } from "../core/corpus.js";
@@ -42,6 +42,11 @@ try {
 
   for (const a of chosen) {
     const memberId = a.memberId ?? "M-1001";
+    // Cleared between attacks so one attacker's spend does not throttle
+    // the next and read as a defence. The cost attack is unaffected:
+    // it trips the PER-TURN cap, which is counted in memory and not in
+    // this store.
+    limiter.clear(memberId);
     memory.forgetAll(memberId);
     if (existsSync(".idempotency.json")) unlinkSync(".idempotency.json");
     await fetch(`${BASE}/_reset`, { method: "POST" }).catch(() => {});
